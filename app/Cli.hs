@@ -1,10 +1,11 @@
-module Cli (IndexOptions (..), LocateOptions (..), Command (..), parser, cliParser) where
+module Cli where
 
 import Options.Applicative
 
 data IndexOptions = IndexOptions
   { indexDatabase :: Maybe FilePath,
     indexFilterPrefix :: Maybe Text,
+    indexSystem :: Maybe Text,
     indexExtraScopes :: [Text],
     indexVerbose :: Bool
   }
@@ -36,36 +37,37 @@ defaultExtraScopes =
 -- Parser for index command
 indexParser :: Parser IndexOptions
 indexParser =
-  IndexOptions
-    <$> optional
-      ( strOption
-          ( long "db"
-              <> short 'd'
-              <> metavar "PATH"
-              <> help "Directory where the index is stored"
-          )
-      )
-    <*> optional
-      ( strOption
-          ( long "filter-prefix"
-              <> metavar "FILTER_PREFIX"
-              <> help "Only add paths starting with PREFIX"
-          )
-      )
-    <*> fmap
+  IndexOptions <$> db <*> fp <*> sy <*> es <*> vb
+  where
+    db =
+      optional $
+        strOption $
+          long "db"
+            <> short 'd'
+            <> metavar "PATH"
+            <> help "Directory where the index is stored"
+    fp =
+      optional $
+        strOption $
+          long "filter-prefix"
+            <> metavar "FILTER_PREFIX"
+            <> help "Only add paths starting with PREFIX"
+    sy =
+      optional $
+        strOption $
+          long "system"
+            <> short 's'
+            <> metavar "PLATFORM"
+            <> help "Specify system platform for which to build the index"
+    es =
       (\xs -> if null xs then defaultExtraScopes else xs)
-      ( many
-          ( strOption
-              ( long "extra-scopes"
-                  <> metavar "SCOPE"
-                  <> help "Extra scopes to index [default: haskellPackages rPackages coqPackages texlive.pkgs ocamlPackages]"
-              )
-          )
-      )
-    <*> switch
-      ( long "verbose"
-          <> short 'v'
-      )
+        <$> ( many $
+                strOption $
+                  long "extra-scopes"
+                    <> metavar "SCOPES"
+                    <> help "Extra scopes to index [default: haskellPackages rPackages coqPackages texlive.pkgs ocamlPackages]"
+            )
+    vb = switch (long "verbose" <> short 'v')
 
 -- Parser for locate command
 locateParser :: Parser LocateOptions

@@ -43,7 +43,6 @@ common shared
     async,
     base >=4 && <5,
     bytestring,
-    conduit,
     containers,
     data-default,
     directory,
@@ -57,13 +56,10 @@ common shared
     process,
     regex-tdfa,
     relude >=1.0,
-    shower,
     stm,
     text,
-    time,
     transformers,
     zstd,
-    vector,
 
   default-language: GHC2021
 
@@ -72,8 +68,13 @@ library
   hs-source-dirs: src
   exposed-modules:
     Sakuin
+
   other-modules:
-    Sakuin.Nixpkgs
+    Sakuin.Hydra
+    Sakuin.NixEnv
+    Sakuin.Pipeline
+    Sakuin.Types
+    Sakuin.WorkQueue
 
 executable nix-sakuin
   import: shared
@@ -87,4 +88,6 @@ executable nix-sakuin
 
   other-modules:
     Cli
+    Index
+    Locate
     Paths_nix_sakuin

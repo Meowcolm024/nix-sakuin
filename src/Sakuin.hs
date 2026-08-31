@@ -1,3 +1,4 @@
-module Sakuin (Packages (..), queryPackages) where
+module Sakuin (Packages (..), queryAllScopes) where
 
-import Sakuin.Nixpkgs
+import Sakuin.NixEnv
+import Sakuin.Types
