@@ -1,0 +1,88 @@
+cabal-version: 2.4
+name: nix-sakuin
+version: 0.1.0.0
+license: MIT
+copyright: 2026 Meowcolm024
+author: Meowcolm024
+extra-source-files:
+  LICENSE
+  README.md
+
+common shared
+  ghc-options:
+    -Wall
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-deriving-strategies
+    -Wunused-foralls
+    -Wunused-imports
+    -fprint-explicit-foralls
+    -fprint-explicit-kinds
+    -Werror
+
+  mixins:
+    base hiding (Prelude),
+    relude (Relude as Prelude, Relude.Container.One),
+    relude,
+
+  default-extensions:
+    DataKinds
+    DerivingStrategies
+    DerivingVia
+    GADTs
+    LambdaCase
+    MultiWayIf
+    NoStarIsType
+    OverloadedStrings
+    StrictData
+    TypeFamilies
+    ViewPatterns
+
+  build-depends:
+    aeson,
+    async,
+    base >=4 && <5,
+    bytestring,
+    conduit,
+    containers,
+    data-default,
+    directory,
+    http-client,
+    http-client-tls,
+    lzma,
+    mtl,
+    optparse-applicative,
+    path,
+    path-io,
+    process,
+    regex-tdfa,
+    relude >=1.0,
+    shower,
+    stm,
+    text,
+    time,
+    transformers,
+    xeno,
+    zstd,
+
+  default-language: GHC2021
+
+library
+  import: shared
+  hs-source-dirs: src
+  exposed-modules:
+    Sakuin
+
+executable nix-sakuin
+  import: shared
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    nix-sakuin
+
+  autogen-modules:
+    Paths_nix_sakuin
+
+  other-modules:
+    Cli
+    Paths_nix_sakuin
