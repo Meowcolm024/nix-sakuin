@@ -1,4 +1,3 @@
-module Sakuin where
+module Sakuin (Packages (..), queryPackages) where
 
-hello :: IO ()
-hello = putTextLn "Hello from nix-sakuin"
+import Sakuin.Nixpkgs

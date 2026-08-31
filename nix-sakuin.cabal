@@ -62,8 +62,8 @@ common shared
     text,
     time,
     transformers,
-    xeno,
     zstd,
+    vector,
 
   default-language: GHC2021
 
@@ -72,6 +72,8 @@ library
   hs-source-dirs: src
   exposed-modules:
     Sakuin
+  other-modules:
+    Sakuin.Nixpkgs
 
 executable nix-sakuin
   import: shared
