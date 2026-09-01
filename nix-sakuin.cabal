@@ -48,12 +48,15 @@ common shared
     directory,
     http-client,
     http-client-tls,
+    http-types,
     lzma,
     mtl,
+    network-uri,
     optparse-applicative,
     path,
     path-io,
     process,
+    random,
     regex-tdfa,
     relude >=1.0,
     stm,
@@ -91,3 +94,14 @@ executable nix-sakuin
     Index
     Locate
     Paths_nix_sakuin
+
+test-suite nix-sakuin-test
+  import: shared
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  hs-source-dirs:
+    test
+
+  build-depends:
+    nix-sakuin,
+    tasty,

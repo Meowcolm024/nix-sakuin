@@ -1,5 +1,7 @@
 module Sakuin.Types where
 
+import Data.ByteString.Char8 qualified as BS8
+import Data.List (lookup)
 import Data.Text qualified as T
 
 type StoreHash = Text
@@ -59,11 +61,40 @@ data StoreEntry = StoreEntry
   deriving stock (Show)
 
 newtype Packages = Packages (Map StoreHash StoreEntry)
-  deriving stock (Show)
+  deriving newtype (Show, Semigroup, Monoid)
 
-data Narinfo = Narinfo
+data NarInfo = NarInfo
   { niStorePath :: StorePath,
     niNarPath :: Text,
     niReferences :: [StoreEntry]
   }
   deriving stock (Show)
+
+parseNarInfoWith :: StoreEntry -> ByteString -> Maybe NarInfo
+parseNarInfoWith (StoreEntry _ origin) bs = do
+  let fields =
+        [ (key, value)
+        | line <- BS8.lines bs,
+          let (key, rest) = BS8.break (== ':') line,
+          not (BS8.null rest),
+          let value = BS8.drop 1 rest
+        ]
+  niStorePath <- parseStorePath =<< lookupField fields "StorePath"
+  niNarPath <- lookupField fields "URL"
+  referenceTexts <- lookupFields fields "References"
+  niRefPaths <- traverse parseStorePath referenceTexts
+  let niReferences = map (\sp -> StoreEntry sp (origin {orToplevel = False})) niRefPaths
+  pure $ NarInfo niStorePath niNarPath niReferences
+  where
+    lookupField fields key = T.strip . decodeUtf8 <$> lookup key fields
+    lookupFields fields key = T.words <$> lookupField fields key
+
+data FileNode
+  = Regular {size :: Word64, executable :: Bool}
+  | Symlink {target :: Text}
+  | Directory {children :: Map Text FileNode}
+  deriving stock (Show)
+
+class (Monad m) => MonadCache m where
+  fetchNarinfo :: StoreEntry -> m (Maybe NarInfo)
+  fetchListing :: StoreEntry -> m (Maybe FileNode)
