@@ -1,5 +1,6 @@
 module Sakuin.Types where
 
+import Data.Aeson
 import Data.ByteString.Char8 qualified as BS8
 import Data.List (lookup)
 import Data.Text qualified as T
@@ -95,7 +96,23 @@ data FileNode
   = Regular {size :: Word64, executable :: Bool}
   | Symlink {target :: Text}
   | Directory {children :: Map Text FileNode}
-  deriving stock (Show)
+  deriving stock (Show, Eq)
+
+instance FromJSON FileNode where
+  parseJSON = withObject "FileNode" $ \o -> do
+    nodeType <- o .: "type"
+    case nodeType :: Text of
+      "regular" -> Regular <$> o .: "size" <*> o .:? "executable" .!= False
+      "symlink" -> Symlink <$> o .: "target"
+      "directory" -> Directory <$> o .: "entries"
+      unknown -> fail $ "Unknown file node type: " <> toString unknown
+
+newtype FileListing = FileListing {root :: FileNode}
+  deriving newtype (Show)
+
+instance FromJSON FileListing where
+  parseJSON = withObject "FileListing" $ \o ->
+    FileListing <$> o .: "root"
 
 class (Monad m) => MonadCache m where
   fetchNarinfo :: StorePath -> m (Maybe NarInfo)

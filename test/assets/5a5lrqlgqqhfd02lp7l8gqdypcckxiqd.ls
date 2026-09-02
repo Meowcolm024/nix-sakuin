@@ -1,0 +1,1 @@
+{"root":{"entries":{"bin":{"entries":{"agda":{"executable":true,"size":124375104,"type":"regular"},"agda-mode":{"executable":true,"size":21067552,"type":"regular"}},"type":"directory"}},"type":"directory"},"version":1}
