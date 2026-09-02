@@ -1,5 +1,6 @@
 module Sakuin.TypesSpec (tests) where
 
+import Data.Map qualified as Map
 import Sakuin
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -19,6 +20,19 @@ tests =
             mapped = (<> "!") <$> annotated
         originTuple (origin mapped) @?= originTuple packageOrigin
         value mapped @?= "hello!",
+      testCase "flattens a file tree while retaining paths" $ do
+        let files =
+              FileNode . Directory . Map.fromList $
+                [ ("link", FileNode $ Symlink "target"),
+                  ( "share",
+                    FileNode . Directory $
+                      Map.singleton "data" (FileNode $ Regular 12 False)
+                  )
+                ]
+        toFileList files
+          @?= [ ("/link", Symlink "target"),
+                ("/share/data", Regular 12 False)
+              ],
       testCase "parses relative references in the narinfo fixture" $ do
         narinfo <- readFileBS "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
         case parseNarInfo narinfo of

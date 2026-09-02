@@ -241,15 +241,15 @@ storePath name index =
 
 mockListing :: Int -> FileNode
 mockListing index =
-  Directory $
+  FileNode . Directory $
     Map.fromList
       [ ( "bin",
-          Directory $
+          FileNode . Directory $
             Map.singleton
               ("mock-tool-" <> show index)
-              (Regular (fromIntegral (4096 + index)) True)
+              (FileNode $ Regular (fromIntegral (4096 + index)) True)
         ),
         ( "share",
-          Directory $ Map.singleton "current" (Symlink "../bin")
+          FileNode . Directory $ Map.singleton "current" (FileNode $ Symlink "../bin")
         )
       ]

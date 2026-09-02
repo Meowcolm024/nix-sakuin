@@ -6,6 +6,7 @@ import Control.Monad.Trans qualified as Trans
 import Data.Aeson
 import Data.ByteString.Char8 qualified as BS8
 import Data.List (lookup)
+import Data.Map qualified as Map
 import Data.Text qualified as T
 
 type StoreHash = Text
@@ -95,19 +96,22 @@ parseNarInfo bs = do
       | "/" `T.isPrefixOf` reference = parseStorePath reference
       | otherwise = parseStorePath (storeDir <> "/" <> reference)
 
-data FileNode
+data FileNode' a
   = Regular {size :: Word64, executable :: Bool}
   | Symlink {target :: Text}
-  | Directory {children :: Map Text FileNode}
-  deriving stock (Show, Eq)
+  | Directory {children :: Map Text a}
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+
+newtype FileNode = FileNode (FileNode' (FileNode))
+  deriving newtype (Show, Eq)
 
 instance FromJSON FileNode where
   parseJSON = withObject "FileNode" $ \o -> do
     nodeType <- o .: "type"
     case nodeType :: Text of
-      "regular" -> Regular <$> o .: "size" <*> o .:? "executable" .!= False
-      "symlink" -> Symlink <$> o .: "target"
-      "directory" -> Directory <$> o .: "entries"
+      "regular" -> FileNode <$> (Regular <$> o .: "size" <*> o .:? "executable" .!= False)
+      "symlink" -> FileNode . Symlink <$> o .: "target"
+      "directory" -> FileNode . Directory <$> o .: "entries"
       unknown -> fail $ "Unknown file node type: " <> toString unknown
 
 newtype FileListing = FileListing {root :: FileNode}
@@ -116,6 +120,22 @@ newtype FileListing = FileListing {root :: FileNode}
 instance FromJSON FileListing where
   parseJSON = withObject "FileListing" $ \o ->
     FileListing <$> o .: "root"
+
+type FileList = [(Text, FileNode' Void)]
+
+toFileList :: FileNode -> FileList
+toFileList = go ""
+  where
+    go path (FileNode (Regular fileSize isExecutable)) =
+      [(path, Regular fileSize isExecutable)]
+    go path (FileNode (Symlink linkTarget)) =
+      [(path, Symlink linkTarget)]
+    go path (FileNode (Directory entries)) =
+      foldMap
+        (\(name, node) -> go (appendPath path name) node)
+        (Map.toAscList entries)
+    appendPath "" name = "/" <> name
+    appendPath path name = path <> "/" <> name
 
 data IndexedStorePath = IndexedStorePath
   { indexedPath :: WithOrigin StorePath,

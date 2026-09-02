@@ -70,12 +70,12 @@ narinfoFixture = "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
 
 expectedListing :: FileNode
 expectedListing =
-  Directory $
+  FileNode . Directory $
     Map.singleton
       "bin"
-      ( Directory $
+      ( FileNode . Directory $
           Map.fromList
-            [ ("agda", Regular 124375104 True),
-              ("agda-mode", Regular 21067552 True)
+            [ ("agda", FileNode $ Regular 124375104 True),
+              ("agda-mode", FileNode $ Regular 21067552 True)
             ]
       )
