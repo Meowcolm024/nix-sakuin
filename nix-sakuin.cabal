@@ -76,6 +76,8 @@ library
   hs-source-dirs: src
   exposed-modules:
     Sakuin
+    Sakuin.Database
+    Sakuin.Database.MemoryDatabase
     Sakuin.Hydra
     Sakuin.NixEnv
     Sakuin.Pipeline
@@ -106,6 +108,7 @@ test-suite nix-sakuin-test
     test
 
   other-modules:
+    Sakuin.DatabaseSpec
     Sakuin.HydraSpec
     Sakuin.MockRegistry
     Sakuin.MockRegistrySpec

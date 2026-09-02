@@ -1,5 +1,8 @@
 module Sakuin.Types where
 
+import Control.Monad.Catch qualified as Catch
+import Control.Monad.IO.Unlift (MonadUnliftIO)
+import Control.Monad.Trans qualified as Trans
 import Data.Aeson
 import Data.ByteString.Char8 qualified as BS8
 import Data.List (lookup)
@@ -126,3 +129,23 @@ class (Monad m) => MonadCache m where
 
 class (Monad m) => MonadDatabase m where
   addToDatabase :: IndexedStorePath -> m ()
+
+newtype DatabaseT d m a = DatabaseT
+  { unDatabaseT :: ReaderT d m a
+  }
+  deriving newtype
+    ( Functor,
+      Applicative,
+      Monad,
+      MonadIO,
+      MonadUnliftIO,
+      Catch.MonadThrow,
+      Catch.MonadCatch,
+      Catch.MonadMask
+    )
+
+instance MonadTrans (DatabaseT d) where
+  lift = DatabaseT . Trans.lift
+
+runDatabaseT :: d -> DatabaseT d m a -> m a
+runDatabaseT database = (`runReaderT` database) . unDatabaseT

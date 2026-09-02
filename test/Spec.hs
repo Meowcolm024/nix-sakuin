@@ -1,3 +1,4 @@
+import Sakuin.DatabaseSpec qualified as DatabaseSpec
 import Sakuin.HydraSpec qualified as HydraSpec
 import Sakuin.MockRegistrySpec qualified as MockRegistrySpec
 import Sakuin.NixEnvSpec qualified as NixEnvSpec
@@ -10,7 +11,8 @@ main =
   defaultMain $
     testGroup
       "nix-sakuin"
-      [ TypesSpec.tests,
+      [ DatabaseSpec.tests,
+        TypesSpec.tests,
         NixEnvSpec.tests,
         HydraSpec.tests,
         MockRegistrySpec.tests,

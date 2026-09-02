@@ -6,6 +6,7 @@ import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Sakuin
+import Sakuin.Database
 
 data MockRegistryConfig = MockRegistryConfig
   { mockEntryCount :: Int,
@@ -59,7 +60,7 @@ runMockCache registry = (`runReader` registry) . unMockCache
 
 data MockPipelineEnvironment = MockPipelineEnvironment
   { mpeRegistry :: MockRegistry,
-    mpeDatabase :: TVar (Map StoreHash IndexedStorePath)
+    mpeDatabase :: MemoryDatabase
   }
 
 newtype MockPipeline a = MockPipeline {unMockPipeline :: ReaderT MockPipelineEnvironment IO a}
@@ -90,17 +91,16 @@ instance MonadCache MockPipeline where
 instance MonadDatabase MockPipeline where
   addToDatabase indexed = MockPipeline $ do
     database <- asks mpeDatabase
-    liftIO . atomically $
-      modifyTVar' database (Map.insert (spHash (value (indexedPath indexed))) indexed)
+    liftIO $ insertMemoryDatabase database indexed
 
 -- | Exercise the real concurrent pipeline against the generated cache and an
 -- in-memory database, returning everything the pipeline emitted.
 runMockPipeline :: Int -> MockRegistry -> IO (Map StoreHash IndexedStorePath)
 runMockPipeline workerCount registry = do
-  database <- newTVarIO Map.empty
+  database <- newMemoryDatabase
   let environment = MockPipelineEnvironment registry database
   runReaderT (unMockPipeline (runPipeline workerCount (mrSeeds registry))) environment
-  readTVarIO database
+  readMemoryDatabase database
 
 mockEntries :: MockRegistry -> Map StoreHash MockRegistryEntry
 mockEntries = mrEntries
