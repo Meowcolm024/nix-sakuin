@@ -1,6 +1,9 @@
 module Sakuin.TypesSpec (tests) where
 
+import Data.ByteString qualified as BS
 import Data.Map qualified as Map
+import Data.Maybe (listToMaybe)
+import Data.Text (Text)
 import Sakuin
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -34,7 +37,7 @@ tests =
                 ("/share/data", Regular 12 False)
               ],
       testCase "parses relative references in the narinfo fixture" $ do
-        narinfo <- readFileBS "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
+        narinfo <- BS.readFile "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
         case parseNarInfo narinfo of
           Nothing -> assertFailure "failed to parse narinfo fixture"
           Just parsed -> do
@@ -44,7 +47,7 @@ tests =
               @?= "nar/1xz06276mlns3mspsj26zjar4pn77b106am2bjqc63zvlvalwgm0.nar.zst"
             let references = niReferences parsed
             length references @?= 7
-            (storePathTuple <$> viaNonEmpty head references)
+            (storePathTuple <$> listToMaybe references)
               @?= Just ("/nix/store", "2l4pgv9hmhsk7q57rk6lp4hpgii084f2", "Agda-2.8.0-data")
             all ((== "/nix/store") . spDir) references @?= True
     ]

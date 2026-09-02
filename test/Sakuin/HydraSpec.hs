@@ -2,7 +2,13 @@ module Sakuin.HydraSpec (tests) where
 
 import Codec.Compression.Lzma qualified as Lzma
 import Codec.Compression.Zstd.Lazy qualified as Zstd
+import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as LBS
+import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.Maybe (isNothing)
+import Effectful
+import Effectful.Dispatch.Dynamic
 import Sakuin
 import Sakuin.Hydra
 import Test.Tasty (TestTree, testGroup)
@@ -13,36 +19,28 @@ data MockCacheData = MockCacheData
     mockListings :: Map StoreHash FileNode
   }
 
-newtype MockCache a = MockCache {unMockCache :: Reader MockCacheData a}
-  deriving newtype (Functor, Applicative, Monad)
-
-instance MonadCache MockCache where
-  fetchNarinfo storePath =
-    MockCache $ asks (Map.lookup (spHash storePath) . mockNarInfos)
-
-  fetchListing storePath =
-    MockCache $ asks (Map.lookup (spHash storePath) . mockListings)
-
-runMockCache :: MockCacheData -> MockCache a -> a
-runMockCache cache = (`runReader` cache) . unMockCache
+runMockCache :: forall es a. MockCacheData -> Eff (Fetch : es) a -> Eff es a
+runMockCache cache = interpret $ \_ -> \case
+  FetchNarInfo storePath -> pure $ Map.lookup (spHash storePath) (mockNarInfos cache)
+  FetchListing storePath -> pure $ Map.lookup (spHash storePath) (mockListings cache)
 
 tests :: TestTree
 tests =
   testGroup
     "Hydra"
     [ testCase "parses the decompressed listing fixture" $ do
-        listing <- readFileLBS listingFixture
+        listing <- LBS.readFile listingFixture
         parseListing listing @?= Right expectedListing,
       testCase "passes through an uncompressed listing" $ do
-        listing <- readFileLBS listingFixture
+        listing <- LBS.readFile listingFixture
         decodeListing listing @?= listing,
       testCase "decodes zstd and xz listings generated at runtime" $ do
-        listing <- readFileLBS listingFixture
+        listing <- LBS.readFile listingFixture
         decodeListing (Zstd.compress 3 listing) @?= listing
         decodeListing (Lzma.compress listing) @?= listing,
       testCase "serves fixture data from a mock cache by store hash" $ do
-        narinfoBytes <- readFileBS narinfoFixture
-        listingBytes <- readFileLBS listingFixture
+        narinfoBytes <- BS.readFile narinfoFixture
+        listingBytes <- LBS.readFile listingFixture
         case (parseNarInfo narinfoBytes, parseListing listingBytes) of
           (Just narinfo, Right listing) -> do
             let storePath = niStorePath narinfo
@@ -52,12 +50,12 @@ tests =
                     { mockNarInfos = Map.singleton storeHash narinfo,
                       mockListings = Map.singleton storeHash listing
                     }
-            (niNarPath <$> runMockCache cache (fetchNarinfo storePath))
+            (niNarPath <$> runPureEff (runMockCache cache (fetchNarInfo storePath)))
               @?= Just (niNarPath narinfo)
-            runMockCache cache (fetchListing storePath) @?= Just listing
+            runPureEff (runMockCache cache (fetchListing storePath)) @?= Just listing
             let missing = StorePath "/nix/store" "missing" "missing"
-            isNothing (runMockCache cache (fetchNarinfo missing)) @?= True
-            runMockCache cache (fetchListing missing) @?= Nothing
+            isNothing (runPureEff (runMockCache cache (fetchNarInfo missing))) @?= True
+            runPureEff (runMockCache cache (fetchListing missing)) @?= Nothing
           (Nothing, _) -> assertFailure "failed to parse narinfo fixture"
           (_, Left err) -> assertFailure err
     ]

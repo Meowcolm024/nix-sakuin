@@ -1,10 +1,17 @@
 module Sakuin.MockRegistry where
 
-import Control.Monad.Catch qualified as Catch
-import Control.Monad.IO.Unlift (MonadUnliftIO)
+import Data.Function ((&))
+import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.Maybe
+import Data.Set (Set)
 import Data.Set qualified as Set
+import Data.Text (Text)
 import Data.Text qualified as T
+import Effectful
+import Effectful.Concurrent
+import Effectful.Dispatch.Dynamic
+import Effectful.Fail
 import Sakuin
 import Sakuin.Database
 
@@ -39,11 +46,9 @@ data MockRegistry = MockRegistry
   }
   deriving stock (Show)
 
-newtype MockCache a = MockCache {unMockCache :: Reader MockRegistry a}
-  deriving newtype (Functor, Applicative, Monad)
-
-instance MonadCache MockCache where
-  fetchNarinfo path = MockCache $ asks $ \registry -> do
+runMockCache :: forall es a. MockRegistry -> Eff (Fetch : es) a -> Eff es a
+runMockCache registry = interpret $ \_ -> \case
+  FetchNarInfo path -> pure $ do
     entry <- Map.lookup (spHash path) (mrEntries registry)
     pure
       NarInfo
@@ -51,56 +56,21 @@ instance MonadCache MockCache where
           niNarPath = "nar/" <> spHash (mockPath entry) <> ".nar.xz",
           niReferences = mockReferences entry
         }
+  FetchListing path -> pure $ fmap mockFiles (Map.lookup (spHash path) (mrEntries registry))
 
-  fetchListing path =
-    MockCache $ asks (fmap mockFiles . Map.lookup (spHash path) . mrEntries)
-
-runMockCache :: MockRegistry -> MockCache a -> a
-runMockCache registry = (`runReader` registry) . unMockCache
-
-data MockPipelineEnvironment = MockPipelineEnvironment
-  { mpeRegistry :: MockRegistry,
-    mpeDatabase :: MemoryDatabase
-  }
-
-newtype MockPipeline a = MockPipeline {unMockPipeline :: ReaderT MockPipelineEnvironment IO a}
-  deriving newtype
-    ( Functor,
-      Applicative,
-      Monad,
-      MonadIO,
-      MonadUnliftIO,
-      Catch.MonadThrow,
-      Catch.MonadCatch,
-      Catch.MonadMask
-    )
-
-instance MonadCache MockPipeline where
-  fetchNarinfo path = MockPipeline $ asks $ \environment -> do
-    entry <- Map.lookup (spHash path) (mrEntries (mpeRegistry environment))
-    pure
-      NarInfo
-        { niStorePath = mockPath entry,
-          niNarPath = "nar/" <> spHash (mockPath entry) <> ".nar.xz",
-          niReferences = mockReferences entry
-        }
-
-  fetchListing path =
-    MockPipeline $ asks (fmap mockFiles . Map.lookup (spHash path) . mrEntries . mpeRegistry)
-
-instance MonadDatabase MockPipeline where
-  addToDatabase indexed = MockPipeline $ do
-    database <- asks mpeDatabase
-    liftIO $ insertMemoryDatabase database indexed
+runMockDatabase :: forall es a. (Concurrent :> es) => MemoryDatabase -> Eff (Database : es) a -> Eff es a
+runMockDatabase database = interpret $ \_ -> \case
+  AddToDatabase indexed -> insertMemoryDatabase database indexed
 
 -- | Exercise the real concurrent pipeline against the generated cache and an
 -- in-memory database, returning everything the pipeline emitted.
 runMockPipeline :: Int -> MockRegistry -> IO (Map StoreHash IndexedStorePath)
-runMockPipeline workerCount registry = do
-  database <- newMemoryDatabase
-  let environment = MockPipelineEnvironment registry database
-  runReaderT (unMockPipeline (runPipeline workerCount (mrSeeds registry))) environment
-  readMemoryDatabase database
+runMockPipeline workerCount registry =
+  runEff . runFailIO . runConcurrent $ do
+    database <- newMemoryDatabase
+    runMockDatabase database . runMockCache registry $
+      runPipeline workerCount (mrSeeds registry)
+    readMemoryDatabase database
 
 mockEntries :: MockRegistry -> Map StoreHash MockRegistryEntry
 mockEntries = mrEntries
@@ -166,7 +136,7 @@ makeEntry index path paths externals =
       at (index + 1)
         <> (if index `mod` 4 == 0 then at (index + 2) else [])
         <> (if index `mod` 7 == 6 then at (index - 1) else [])
-          & filter (\reference -> index `mod` 4 /= 3 || spHash reference < spHash path)
+        & filter (\reference -> index `mod` 4 /= 3 || spHash reference < spHash path)
     externalReferences =
       case externals of
         [] -> []
@@ -225,7 +195,7 @@ preferOrigin existing candidate
 seedOrigin :: Int -> Origin
 seedOrigin index =
   Origin
-    { orAttr = "mock.package." <> show index,
+    { orAttr = "mock.package." <> T.show index,
       orOutput = "out",
       orToplevel = True,
       orSystem = "x86_64-linux"
@@ -235,8 +205,8 @@ storePath :: Text -> Int -> StorePath
 storePath name index =
   StorePath
     { spDir = "/nix/store",
-      spHash = T.justifyRight 32 '0' (show (index + 1)),
-      spName = name <> "-" <> show index <> "-1.0"
+      spHash = T.justifyRight 32 '0' (T.show (index + 1)),
+      spName = name <> "-" <> T.show index <> "-1.0"
     }
 
 mockListing :: Int -> FileNode
@@ -246,7 +216,7 @@ mockListing index =
       [ ( "bin",
           FileNode . Directory $
             Map.singleton
-              ("mock-tool-" <> show index)
+              ("mock-tool-" <> T.show index)
               (FileNode $ Regular (fromIntegral (4096 + index)) True)
         ),
         ( "share",

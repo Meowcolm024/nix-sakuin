@@ -1,5 +1,6 @@
 module Sakuin.NixEnvSpec (tests) where
 
+import Data.ByteString.Lazy qualified as LBS
 import Data.Map qualified as Map
 import Sakuin
 import Sakuin.NixEnv (parsePackages)
@@ -11,8 +12,8 @@ tests =
   testGroup
     "NixEnv"
     [ testCase "parses the nix-env package fixture" $ do
-        json <- readFileBS "test/assets/packages.json"
-        case parsePackages (toString (decodeUtf8 json :: Text)) of
+        json <- LBS.readFile "test/assets/packages.json"
+        case parsePackages json of
           Left err -> assertFailure err
           Right (Packages packages) ->
             Map.keys packages

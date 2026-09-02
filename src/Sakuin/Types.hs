@@ -1,13 +1,17 @@
 module Sakuin.Types where
 
-import Control.Monad.Catch qualified as Catch
-import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Control.Monad.Trans qualified as Trans
 import Data.Aeson
+import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS8
-import Data.List (lookup)
+import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.Text
 import Data.Text qualified as T
+import Data.Text.Encoding (decodeUtf8)
+import Data.Void (Void)
+import Data.Word (Word64)
+import Effectful
+import Effectful.Dispatch.Dynamic (send)
 
 type StoreHash = Text
 
@@ -112,7 +116,7 @@ instance FromJSON FileNode where
       "regular" -> FileNode <$> (Regular <$> o .: "size" <*> o .:? "executable" .!= False)
       "symlink" -> FileNode . Symlink <$> o .: "target"
       "directory" -> FileNode . Directory <$> o .: "entries"
-      unknown -> fail $ "Unknown file node type: " <> toString unknown
+      unknown -> fail $ "Unknown file node type: " <> T.unpack unknown
 
 newtype FileListing = FileListing {root :: FileNode}
   deriving newtype (Show, Eq)
@@ -143,29 +147,22 @@ data IndexedStorePath = IndexedStorePath
   }
   deriving stock (Show, Eq)
 
-class (Monad m) => MonadCache m where
-  fetchNarinfo :: StorePath -> m (Maybe NarInfo)
-  fetchListing :: StorePath -> m (Maybe FileNode)
+data Fetch :: Effect where
+  FetchNarInfo :: forall m. StorePath -> Fetch m (Maybe NarInfo)
+  FetchListing :: forall m. StorePath -> Fetch m (Maybe FileNode)
 
-class (Monad m) => MonadDatabase m where
-  addToDatabase :: IndexedStorePath -> m ()
+type instance DispatchOf Fetch = Dynamic
 
-newtype DatabaseT d m a = DatabaseT
-  { unDatabaseT :: ReaderT d m a
-  }
-  deriving newtype
-    ( Functor,
-      Applicative,
-      Monad,
-      MonadIO,
-      MonadUnliftIO,
-      Catch.MonadThrow,
-      Catch.MonadCatch,
-      Catch.MonadMask
-    )
+fetchNarInfo :: forall es. (Fetch :> es) => StorePath -> Eff es (Maybe NarInfo)
+fetchNarInfo = send . FetchNarInfo
 
-instance MonadTrans (DatabaseT d) where
-  lift = DatabaseT . Trans.lift
+fetchListing :: forall es. (Fetch :> es) => StorePath -> Eff es (Maybe FileNode)
+fetchListing = send . FetchListing
 
-runDatabaseT :: d -> DatabaseT d m a -> m a
-runDatabaseT database = (`runReaderT` database) . unDatabaseT
+data Database :: Effect where
+  AddToDatabase :: forall m. IndexedStorePath -> Database m ()
+
+type instance DispatchOf Database = Dynamic
+
+addToDatabase :: forall es. (Database :> es) => IndexedStorePath -> Eff es ()
+addToDatabase = send . AddToDatabase

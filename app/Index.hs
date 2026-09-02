@@ -1,26 +1,37 @@
 module Index where
 
 import Cli
+import Data.Text qualified as T
 import Data.Text.IO qualified as T
-import Network.HTTP.Client.TLS (newTlsManager)
+import Effectful
+import Effectful.Concurrent.Async
+import Effectful.Fail
+import Effectful.Reader.Static (runReader)
+import Network.HTTP.Client.TLS
 import Sakuin
 import Sakuin.Database
-import Sakuin.Hydra (CacheIO (..))
+import Sakuin.Hydra
 import Sakuin.NixEnv (queryPackages)
-
-type Runtime a = DatabaseT MemoryDatabase CacheIO a
+import System.IO
 
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
   print opts
-  pkgs <- queryPackages "<nixpkgs>" (indexSystem opts) (Just "coqPackages")
-  let Packages pkgs' = pkgs
-  putTextLn $ "package count: " <> show (length pkgs')
-  hFlush stdout
   mgr <- newTlsManager
-  db <- newMemoryDatabase
-  runReaderT (runCacheIO (runDatabaseT db (runDatabaseT db $ runPipeline 100 pkgs))) mgr
-  withFile "out.txt" WriteMode $ \h -> do
-    T.hPutStr h =<< formatMemoryDatabase db
-  putTextLn "done"
+  result <- runEff
+    . runFailIO
+    . runConcurrent
+    . runReader mgr
+    $ do
+      database <- newMemoryDatabase
+      runMemoryDatabase database . runHydra $ do
+        pkgs <- queryPackages "<nixpkgs>" (indexSystem opts) (Just "coqPackages")
+        let Packages pkgs' = pkgs
+        liftIO $ do
+          T.putStrLn $ "package count: " <> T.show (length pkgs')
+          hFlush stdout
+        runPipeline 100 pkgs
+      formatMemoryDatabase database
+  withFile "out.txt" WriteMode $ \h -> T.hPutStr h result
+  T.putStrLn "done"
   hFlush stdout

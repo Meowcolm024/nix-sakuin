@@ -1,5 +1,6 @@
 module Cli where
 
+import Data.Text (Text)
 import Options.Applicative
 
 data IndexOptions = IndexOptions

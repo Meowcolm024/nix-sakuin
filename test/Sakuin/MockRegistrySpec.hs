@@ -1,6 +1,9 @@
 module Sakuin.MockRegistrySpec (tests) where
 
+import Data.List
 import Data.Map qualified as Map
+import Data.Maybe
+import Effectful
 import Sakuin
 import Sakuin.MockRegistry
 import Test.Tasty (TestTree, testGroup)
@@ -38,11 +41,11 @@ tests =
                     mockExternalReferenceCount = 2
                   }
             internal = mockPath (snd (Map.findMin (mockEntries registry)))
-        isJust (runMockCache registry (fetchNarinfo internal)) @?= True
-        isJust (runMockCache registry (fetchListing internal)) @?= True
+        isJust (runPureEff (runMockCache registry (fetchNarInfo internal))) @?= True
+        isJust (runPureEff (runMockCache registry (fetchListing internal))) @?= True
         case mockExternalPaths registry of
           external : _ -> do
-            isNothing (runMockCache registry (fetchNarinfo external)) @?= True
-            isNothing (runMockCache registry (fetchListing external)) @?= True
+            isNothing (runPureEff (runMockCache registry (fetchNarInfo external))) @?= True
+            isNothing (runPureEff (runMockCache registry (fetchListing external))) @?= True
           [] -> fail "mock registry did not generate the requested external paths"
     ]

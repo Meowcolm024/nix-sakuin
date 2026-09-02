@@ -23,11 +23,6 @@ common shared
     -fprint-explicit-kinds
     -Werror
 
-  mixins:
-    base hiding (Prelude),
-    relude (Relude as Prelude, Relude.Container.One),
-    relude,
-
   default-extensions:
     DataKinds
     DerivingStrategies
@@ -43,30 +38,24 @@ common shared
 
   build-depends:
     aeson,
-    async,
     base >=4 && <5,
     bytestring,
     containers,
     data-default,
     directory,
-    exceptions,
+    effectful,
     http-client,
     http-client-tls,
     http-types,
     lzma,
-    mtl,
     network-uri,
     optparse-applicative,
     path,
     path-io,
-    process,
     random,
     regex-tdfa,
-    relude >=1.0,
-    stm,
     text,
-    transformers,
-    unliftio-core,
+    typed-process,
     zstd,
 
   default-language: GHC2021

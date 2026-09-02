@@ -1,12 +1,18 @@
 module Sakuin.NixEnv where
 
-import Control.Concurrent.Async (mapConcurrently)
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
+import Data.ByteString.Lazy qualified as LB
+import Data.ByteString.Lazy.Char8 qualified as LBC
+import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
+import Effectful
+import Effectful.Concurrent.Async
+import Effectful.Fail
 import Sakuin.Types
-import System.Exit (ExitCode (..))
-import System.Process (proc, readCreateProcessWithExitCode)
+import System.Process.Typed
 
 data NixEnvPackage = NixEnvPackage
   { neSystem :: Text,
@@ -37,17 +43,18 @@ normalizePackages pkgs = Packages $ Map.foldlWithKey' insert Map.empty pkgs
         Nothing -> acc
         Just se -> Map.insertWith preferShorter (spHash (value se)) se acc
 
-parsePackages :: String -> Either String Packages
-parsePackages json = normalizePackages <$> eitherDecode (fromString @LByteString json)
+parsePackages :: LB.ByteString -> Either String Packages
+parsePackages json = normalizePackages <$> eitherDecode json
 
-queryPackages :: Text -> Maybe Text -> Maybe Text -> IO Packages
-queryPackages nixpkgs system scope =
-  readCreateProcessWithExitCode (proc "nix-env" args) "" >>= \case
-    (ExitFailure _, _, err) ->
-      fail $ "Failed to query packages: " <> err
-    (ExitSuccess, out, _) ->
+queryPackages :: forall es. (IOE :> es, Fail :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
+queryPackages nixpkgs system scope = do
+  (ec, out, err) <- liftIO $ readProcess (proc "nix-env" args)
+  case ec of
+    ExitFailure _ ->
+      fail $ "Failed to query packages: " <> LBC.unpack err
+    ExitSuccess ->
       case parsePackages out of
-        Left err -> fail $ "Failed to decode JSON: " <> err
+        Left de -> fail $ "Failed to decode JSON: " <> de
         Right val -> pure val
   where
     args =
@@ -61,12 +68,12 @@ queryPackages nixpkgs system scope =
         "overlays",
         "[ ]",
         "--file",
-        toString nixpkgs
+        T.unpack nixpkgs
       ]
-        <> maybe [] (\sy -> ["--argstr", "system", toString sy]) system
-        <> maybe [] (\sc -> ["-A", toString sc]) scope
+        <> maybe [] (\sy -> ["--argstr", "system", T.unpack sy]) system
+        <> maybe [] (\sc -> ["-A", T.unpack sc]) scope
 
-queryAllScopes :: Text -> Maybe Text -> [Text] -> IO Packages
+queryAllScopes :: forall es. (IOE :> es, Concurrent :> es, Fail :> es) => Text -> Maybe Text -> [Text] -> Eff es Packages
 queryAllScopes nixpkgs system scopes =
   foldl' mergePackages (Packages Map.empty)
     <$> mapConcurrently (queryPackages nixpkgs system) (Nothing : map Just scopes)

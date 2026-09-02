@@ -1,8 +1,10 @@
 module Sakuin.WorkQueue where
 
-import Control.Concurrent.STM.TQueue
-import Control.Monad.STM (check)
+import Control.Monad (unless)
+import Data.Set (Set)
 import Data.Set qualified as Set
+import Effectful
+import Effectful.Concurrent.STM
 
 data WorkQueue k v = WorkQueue
   { wqSeen :: TVar (Set k),
@@ -10,7 +12,7 @@ data WorkQueue k v = WorkQueue
     wqActive :: TVar Int
   }
 
-newWorkQueue :: IO (WorkQueue k v)
+newWorkQueue :: forall es k v. (Concurrent :> es) => Eff es (WorkQueue k v)
 newWorkQueue = WorkQueue <$> newTVarIO Set.empty <*> newTQueueIO <*> newTVarIO 0
 
 addWork :: (Ord k) => WorkQueue k v -> k -> v -> STM ()
