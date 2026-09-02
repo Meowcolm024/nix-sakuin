@@ -19,6 +19,7 @@
             fileset = lib.fileset.unions [
               (root + /app)
               (root + /src)
+              (root + /test)
               (root + /nix-sakuin.cabal)
               (root + /LICENSE)
               (root + /README.md)

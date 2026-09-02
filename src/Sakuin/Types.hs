@@ -27,10 +27,10 @@ parseStorePath path = do
             then Nothing
             else Just (a, T.drop 1 b)
     splitLast c t =
-      let (suffix, prefix) = T.breakOnEnd (T.singleton c) t
+      let (prefix, suffix) = T.breakOnEnd (T.singleton c) t
        in if T.null prefix
             then ("", t)
-            else (T.dropEnd 1 prefix, suffix)
+            else (suffix, T.dropEnd 1 prefix)
 
 data Package = Package
   { pAttr :: Attr,
@@ -41,7 +41,7 @@ data Package = Package
   deriving stock (Show)
 
 -- Keep shorter attr for entries with the same hash
-preferShorter :: StoreEntry -> StoreEntry -> StoreEntry
+preferShorter :: WithOrigin a -> WithOrigin a -> WithOrigin a
 preferShorter existing new
   | T.length (orAttr (origin new)) < T.length (orAttr (origin existing)) = new
   | otherwise = existing
@@ -54,40 +54,42 @@ data Origin = Origin
   }
   deriving stock (Show)
 
-data StoreEntry = StoreEntry
-  { storePath :: StorePath,
-    origin :: Origin
+data WithOrigin a = WithOrigin
+  { origin :: Origin,
+    value :: a
   }
-  deriving stock (Show)
+  deriving stock (Show, Functor, Foldable, Traversable)
 
-newtype Packages = Packages (Map StoreHash StoreEntry)
+newtype Packages = Packages (Map StoreHash (WithOrigin StorePath))
   deriving newtype (Show, Semigroup, Monoid)
 
 data NarInfo = NarInfo
   { niStorePath :: StorePath,
     niNarPath :: Text,
-    niReferences :: [StoreEntry]
+    niReferences :: [StorePath]
   }
   deriving stock (Show)
 
-parseNarInfoWith :: StoreEntry -> ByteString -> Maybe NarInfo
-parseNarInfoWith (StoreEntry _ origin) bs = do
+parseNarInfo :: ByteString -> Maybe NarInfo
+parseNarInfo bs = do
   let fields =
-        [ (key, value)
+        [ (key, fieldValue)
         | line <- BS8.lines bs,
           let (key, rest) = BS8.break (== ':') line,
           not (BS8.null rest),
-          let value = BS8.drop 1 rest
+          let fieldValue = BS8.drop 1 rest
         ]
   niStorePath <- parseStorePath =<< lookupField fields "StorePath"
   niNarPath <- lookupField fields "URL"
   referenceTexts <- lookupFields fields "References"
-  niRefPaths <- traverse parseStorePath referenceTexts
-  let niReferences = map (\sp -> StoreEntry sp (origin {orToplevel = False})) niRefPaths
+  niReferences <- traverse (parseReference (spDir niStorePath)) referenceTexts
   pure $ NarInfo niStorePath niNarPath niReferences
   where
     lookupField fields key = T.strip . decodeUtf8 <$> lookup key fields
     lookupFields fields key = T.words <$> lookupField fields key
+    parseReference storeDir reference
+      | "/" `T.isPrefixOf` reference = parseStorePath reference
+      | otherwise = parseStorePath (storeDir <> "/" <> reference)
 
 data FileNode
   = Regular {size :: Word64, executable :: Bool}
@@ -96,5 +98,5 @@ data FileNode
   deriving stock (Show)
 
 class (Monad m) => MonadCache m where
-  fetchNarinfo :: StoreEntry -> m (Maybe NarInfo)
-  fetchListing :: StoreEntry -> m (Maybe FileNode)
+  fetchNarinfo :: StorePath -> m (Maybe NarInfo)
+  fetchListing :: StorePath -> m (Maybe FileNode)

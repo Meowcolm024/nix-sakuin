@@ -1,0 +1,10 @@
+StorePath: /nix/store/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd-Agda-2.8.0-bin
+URL: nar/1xz06276mlns3mspsj26zjar4pn77b106am2bjqc63zvlvalwgm0.nar.zst
+Compression: zstd
+FileHash: sha256:0b1cpdyy0msnna6rw29082wfkia7gbkgmmxhzqcbrpg1z103xc6k
+FileSize: 28742765
+NarHash: sha256:1xz06276mlns3mspsj26zjar4pn77b106am2bjqc63zvlvalwgm0
+NarSize: 145443360
+References: 2l4pgv9hmhsk7q57rk6lp4hpgii084f2-Agda-2.8.0-data 4yckv6rja0a8y0szbnpbjzqsnkczwwrc-libiconv-113 5a5lrqlgqqhfd02lp7l8gqdypcckxiqd-Agda-2.8.0-bin 7c1wq6yczcfpq0844hgbr6fnx5szqlr4-libffi-40 86hmbajpfkwck9p6c1a1iqbq2axrhcm8-zlib-1.3.2 j2qkm39hirxph5smbggaz11g4md655y5-ncurses-6.6 k4ml5dn62rckvisg7c305qw2mgqm3vgz-gmp-with-cxx-6.3.0
+Deriver: 4nqa2bxyq8d2dl7jnbfw0ffcx9m9iysc-Agda-2.8.0.drv
+Sig: cache.nixos.org-1:3xe2I6LlsNU2AE22n0pD6wEzB7hzBLgQ5fAwaoi2ayVnJnRrYh2k1FH8pAXtFP+I2Ut6bWRSb/WOIwjB1VwAAA==

@@ -23,11 +23,11 @@ instance FromJSON NixEnvPackage where
     sp <- os .:? Key.fromText onm
     pure $ NixEnvPackage sys onm sp
 
-toStoreEntry :: Attr -> NixEnvPackage -> Maybe StoreEntry
+toStoreEntry :: Attr -> NixEnvPackage -> Maybe (WithOrigin StorePath)
 toStoreEntry attr pkg = do
   rawPath <- neRawPath pkg
   sp <- parseStorePath rawPath
-  pure $ StoreEntry sp (Origin attr (neOutputName pkg) True (neSystem pkg))
+  pure $ WithOrigin (Origin attr (neOutputName pkg) True (neSystem pkg)) sp
 
 normalizePackages :: Map Attr NixEnvPackage -> Packages
 normalizePackages pkgs = Packages $ Map.foldlWithKey' insert Map.empty pkgs
@@ -35,7 +35,10 @@ normalizePackages pkgs = Packages $ Map.foldlWithKey' insert Map.empty pkgs
     insert acc attr pkg =
       case toStoreEntry attr pkg of
         Nothing -> acc
-        Just se -> Map.insertWith preferShorter (spHash (storePath se)) se acc
+        Just se -> Map.insertWith preferShorter (spHash (value se)) se acc
+
+parsePackages :: String -> Either String Packages
+parsePackages json = normalizePackages <$> eitherDecode (fromString @LByteString json)
 
 queryPackages :: Text -> Maybe Text -> Maybe Text -> IO Packages
 queryPackages nixpkgs system scope =
@@ -43,9 +46,9 @@ queryPackages nixpkgs system scope =
     (ExitFailure _, _, err) ->
       fail $ "Failed to query packages: " <> err
     (ExitSuccess, out, _) ->
-      case eitherDecode (fromString @LByteString out) of
+      case parsePackages out of
         Left err -> fail $ "Failed to decode JSON: " <> err
-        Right val -> pure $ normalizePackages val
+        Right val -> pure val
   where
     args =
       [ "-qaP",

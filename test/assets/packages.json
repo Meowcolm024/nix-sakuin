@@ -1,0 +1,59 @@
+{
+  "haskellPackages.Agda": {
+    "name": "Agda-2.8.0",
+    "outputName": "out",
+    "outputs": {
+      "bin": "/nix/store/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd-Agda-2.8.0-bin",
+      "data": "/nix/store/2l4pgv9hmhsk7q57rk6lp4hpgii084f2-Agda-2.8.0-data",
+      "doc": "/nix/store/l699q415vk2jprx3w60yrw580fxfxfjg-Agda-2.8.0-doc",
+      "out": "/nix/store/a8gldf6cnq7zqrdq3nqzym0kjy91dxbf-Agda-2.8.0"
+    },
+    "pname": "Agda",
+    "system": "aarch64-darwin",
+    "version": "2.8.0"
+  },
+  "haskellPackages.alex": {
+    "name": "alex-3.5.4.2",
+    "outputName": "out",
+    "outputs": {
+      "data": "/nix/store/q56j1lnni5fg2x8zma8dd7bl65rl42wc-alex-3.5.4.2-data",
+      "doc": "/nix/store/3ydfd2aiprqgdgsqfyzrkgzhbkpvj3nd-alex-3.5.4.2-doc",
+      "out": "/nix/store/8x37013i8mdk7i7pcr6j45qjaclpi447-alex-3.5.4.2"
+    },
+    "pname": "alex",
+    "system": "aarch64-darwin",
+    "version": "3.5.4.2"
+  },
+  "haskellPackages.ghc": {
+    "name": "ghc-9.10.3",
+    "outputName": "out",
+    "outputs": {
+      "doc": "/nix/store/0qjk4lafvk3fzn4p7v1zkc0d80ykn64s-ghc-9.10.3-doc",
+      "out": "/nix/store/bryk0z6qn4p4jy10blggrfpq74jh455c-ghc-9.10.3"
+    },
+    "pname": "ghc",
+    "system": "aarch64-darwin",
+    "version": "9.10.3"
+  },
+  "haskellPackages.happy": {
+    "name": "happy-2.1.7",
+    "outputName": "out",
+    "outputs": {
+      "doc": "/nix/store/a48x7im2w44j0f0i5q036dps4xfdr9qr-happy-2.1.7-doc",
+      "out": "/nix/store/l6nadiwa0mxax8h3lk301gkl923alg25-happy-2.1.7"
+    },
+    "pname": "happy",
+    "system": "aarch64-darwin",
+    "version": "2.1.7"
+  },
+  "haskellPackages.pandoc": {
+    "name": "pandoc-3.7.0.2",
+    "outputName": "out",
+    "outputs": {
+      "out": "/nix/store/yj989irxax60w546axvwj6y3swmkkq05-pandoc-3.7.0.2"
+    },
+    "pname": "pandoc",
+    "system": "aarch64-darwin",
+    "version": "3.7.0.2"
+  }
+}

@@ -7,6 +7,8 @@ author: Meowcolm024
 extra-source-files:
   LICENSE
   README.md
+  test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo
+  test/assets/packages.json
 
 common shared
   ghc-options:
@@ -105,3 +107,4 @@ test-suite nix-sakuin-test
   build-depends:
     nix-sakuin,
     tasty,
+    tasty-hunit,
