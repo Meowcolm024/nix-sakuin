@@ -30,5 +30,7 @@ tests =
           entries <- readMemoryDatabase database
           liftIO $ Map.lookup "hash" entries @?= Just replacement
           formatted <- formatMemoryDatabase database
-          liftIO $ formatted @?= "hash\t/bin/example\tRegular {size = 42, executable = False}\n"
+          liftIO $
+            formatted
+              @?= "hash\t/bin\tDirectory {children = ()}\nhash\t/bin/example\tRegular {size = 42, executable = False}\n"
     ]

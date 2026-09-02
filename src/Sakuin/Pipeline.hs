@@ -1,6 +1,7 @@
 module Sakuin.Pipeline where
 
 import Control.Monad
+import Data.Foldable (traverse_)
 import Data.Map qualified as Map
 import Effectful
 import Effectful.Concurrent
@@ -8,6 +9,7 @@ import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
 import Effectful.Exception
 import Effectful.Fail
+import Sakuin.Progress (reportProgress)
 import Sakuin.Types
 import Sakuin.WorkQueue
 
@@ -24,14 +26,36 @@ runPipeline ::
   Int ->
   Packages ->
   Eff es ()
-runPipeline workerCount packages
+runPipeline workerCount = runPipelineInternal workerCount Nothing
+
+runPipelineWithProgress ::
+  forall es.
+  (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, IOE :> es) =>
+  Int ->
+  Eff es Int ->
+  Packages ->
+  Eff es ()
+runPipelineWithProgress workerCount getIndexedCount =
+  runPipelineInternal workerCount (Just $ reportProgress getIndexedCount)
+
+runPipelineInternal ::
+  forall es.
+  (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es) =>
+  Int ->
+  Maybe (WorkQueue StoreHash (WithOrigin StorePath) -> Eff es ()) ->
+  Packages ->
+  Eff es ()
+runPipelineInternal workerCount startProgress packages
   | workerCount <= 0 = fail "pipeline worker count must be positive"
   | otherwise = do
       wq <- newWorkQueue
       seedQueue wq packages
+      progressWorker <- traverse (async . ($ wq)) startProgress
       workers <- replicateM workerCount . async $ (worker wq addToDatabase)
       let stopWorkers = do
+            traverse_ cancel progressWorker
             mapM_ cancel workers
+            void $ traverse waitCatch progressWorker
             void $ mapM waitCatch workers
           waitForOutcome =
             race

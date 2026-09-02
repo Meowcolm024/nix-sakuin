@@ -1,6 +1,7 @@
 module Index where
 
 import Cli
+import Data.Map qualified as Map
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import Effectful
@@ -30,8 +31,10 @@ runIndex opts = do
         liftIO $ do
           T.putStrLn $ "package count: " <> T.show (length pkgs')
           hFlush stdout
-        runPipeline 100 pkgs
-      formatMemoryDatabase database
-  withFile "out.txt" WriteMode $ \h -> T.hPutStr h result
-  T.putStrLn "done"
+        if indexVerbose opts
+          then runPipelineWithProgress 100 (Map.size <$> readMemoryDatabase database) pkgs
+          else runPipeline 100 pkgs
+      readMemoryDatabase database
+  withFile "out.txt" WriteMode $ \h -> T.hPutStr h (formatDatabase result)
+  T.putStrLn $ "done: " <> T.show (Map.size result) <> " paths indexed"
   hFlush stdout

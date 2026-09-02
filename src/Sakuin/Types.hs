@@ -8,7 +8,6 @@ import Data.Map qualified as Map
 import Data.Text
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
-import Data.Void (Void)
 import Data.Word (Word64)
 import Effectful
 import Effectful.Dispatch.Dynamic (send)
@@ -103,10 +102,10 @@ parseNarInfo bs = do
 data FileNode' a
   = Regular {size :: Word64, executable :: Bool}
   | Symlink {target :: Text}
-  | Directory {children :: Map Text a}
+  | Directory {children :: a}
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-newtype FileNode = FileNode (FileNode' (FileNode))
+newtype FileNode = FileNode (FileNode' (Map Text FileNode))
   deriving newtype (Show, Eq)
 
 instance FromJSON FileNode where
@@ -125,7 +124,7 @@ instance FromJSON FileListing where
   parseJSON = withObject "FileListing" $ \o ->
     FileListing <$> o .: "root"
 
-type FileList = [(Text, FileNode' Void)]
+type FileList = [(Text, FileNode' ())]
 
 toFileList :: FileNode -> FileList
 toFileList = go ""
@@ -135,9 +134,14 @@ toFileList = go ""
     go path (FileNode (Symlink linkTarget)) =
       [(path, Symlink linkTarget)]
     go path (FileNode (Directory entries)) =
-      foldMap
-        (\(name, node) -> go (appendPath path name) node)
-        (Map.toAscList entries)
+      directoryEntry
+        <> foldMap
+          (\(name, node) -> go (appendPath path name) node)
+          (Map.toAscList entries)
+      where
+        directoryEntry
+          | path == "" = []
+          | otherwise = [(path, Directory ())]
     appendPath "" name = "/" <> name
     appendPath path name = path <> "/" <> name
 

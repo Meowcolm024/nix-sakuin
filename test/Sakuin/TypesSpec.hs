@@ -34,8 +34,14 @@ tests =
                 ]
         toFileList files
           @?= [ ("/link", Symlink "target"),
+                ("/share", Directory ()),
                 ("/share/data", Regular 12 False)
               ],
+      testCase "retains empty directories without emitting an empty root path" $ do
+        let files =
+              FileNode . Directory $
+                Map.singleton "empty" (FileNode $ Directory Map.empty)
+        toFileList files @?= [("/empty", Directory ())],
       testCase "parses relative references in the narinfo fixture" $ do
         narinfo <- BS.readFile "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
         case parseNarInfo narinfo of

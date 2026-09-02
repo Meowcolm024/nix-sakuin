@@ -70,6 +70,7 @@ library
     Sakuin.Hydra
     Sakuin.NixEnv
     Sakuin.Pipeline
+    Sakuin.Progress
     Sakuin.Types
     Sakuin.WorkQueue
 
@@ -88,6 +89,12 @@ executable nix-sakuin
     Index
     Locate
     Paths_nix_sakuin
+
+  ghc-options:
+    -O2
+    -threaded
+    -rtsopts
+    -funbox-strict-fields
 
 test-suite nix-sakuin-test
   import: shared
