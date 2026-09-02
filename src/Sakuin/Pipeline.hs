@@ -12,13 +12,6 @@ seedQueue :: WorkQueue StoreHash (WithOrigin StorePath) -> Packages -> IO ()
 seedQueue wq (Packages m) =
   atomically $ mapM_ (\(k, v) -> addWork wq k v) (Map.toList m)
 
-referenceOrigin :: Origin -> Origin
-referenceOrigin entryOrigin = entryOrigin {orToplevel = False}
-
-annotateReferences :: WithOrigin StorePath -> NarInfo -> [WithOrigin StorePath]
-annotateReferences parent narinfo =
-  WithOrigin (referenceOrigin (origin parent)) <$> niReferences narinfo
-
 runPipeline ::
   (MonadCache m, MonadDatabase m, MonadUnliftIO m, Catch.MonadMask m) =>
   Int ->
@@ -68,11 +61,16 @@ workerOnce wq emit =
       let storePath = value entry
       narinfo <- fetchNarinfo storePath
       listing <- fetchListing storePath
-
       forM_ narinfo $ \info ->
         liftIO . atomically $
           forM_ (annotateReferences entry info) $ \reference ->
             addWork wq (spHash (value reference)) reference
-
       forM_ listing $ \files ->
         emit $ IndexedStorePath entry files
+
+referenceOrigin :: Origin -> Origin
+referenceOrigin entryOrigin = entryOrigin {orToplevel = False}
+
+annotateReferences :: WithOrigin StorePath -> NarInfo -> [WithOrigin StorePath]
+annotateReferences parent narinfo =
+  WithOrigin (referenceOrigin (origin parent)) <$> niReferences narinfo

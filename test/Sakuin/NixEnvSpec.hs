@@ -2,6 +2,7 @@ module Sakuin.NixEnvSpec (tests) where
 
 import Data.Map qualified as Map
 import Sakuin
+import Sakuin.NixEnv (parsePackages)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 

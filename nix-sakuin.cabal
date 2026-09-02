@@ -76,8 +76,6 @@ library
   hs-source-dirs: src
   exposed-modules:
     Sakuin
-
-  other-modules:
     Sakuin.Hydra
     Sakuin.NixEnv
     Sakuin.Pipeline

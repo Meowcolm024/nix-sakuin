@@ -43,8 +43,8 @@ data Package = Package
 
 -- Keep shorter attr for entries with the same hash
 preferShorter :: WithOrigin a -> WithOrigin a -> WithOrigin a
-preferShorter existing new
-  | T.length (orAttr (origin new)) < T.length (orAttr (origin existing)) = new
+preferShorter existing candidate
+  | T.length (orAttr (origin candidate)) < T.length (orAttr (origin existing)) = candidate
   | otherwise = existing
 
 data Origin = Origin
@@ -69,7 +69,7 @@ data NarInfo = NarInfo
     niNarPath :: Text,
     niReferences :: [StorePath]
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 parseNarInfo :: ByteString -> Maybe NarInfo
 parseNarInfo bs = do
@@ -108,11 +108,17 @@ instance FromJSON FileNode where
       unknown -> fail $ "Unknown file node type: " <> toString unknown
 
 newtype FileListing = FileListing {root :: FileNode}
-  deriving newtype (Show)
+  deriving newtype (Show, Eq)
 
 instance FromJSON FileListing where
   parseJSON = withObject "FileListing" $ \o ->
     FileListing <$> o .: "root"
+
+data IndexedStorePath = IndexedStorePath
+  { indexedPath :: WithOrigin StorePath,
+    indexedFiles :: FileNode
+  }
+  deriving stock (Show, Eq)
 
 class (Monad m) => MonadCache m where
   fetchNarinfo :: StorePath -> m (Maybe NarInfo)
@@ -120,9 +126,3 @@ class (Monad m) => MonadCache m where
 
 class (Monad m) => MonadDatabase m where
   addToDatabase :: IndexedStorePath -> m ()
-
-data IndexedStorePath = IndexedStorePath
-  { indexedPath :: WithOrigin StorePath,
-    indexedFiles :: FileNode
-  }
-  deriving stock (Show, Eq)

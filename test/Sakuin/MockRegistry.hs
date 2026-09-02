@@ -1,23 +1,10 @@
-module Sakuin.MockRegistry
-  ( MockRegistry,
-    MockRegistryConfig (..),
-    MockRegistryEntry (..),
-    defaultMockRegistryConfig,
-    generateMockRegistry,
-    mockEntries,
-    mockExpected,
-    mockExternalPaths,
-    mockSeeds,
-    runMockCache,
-    runMockPipeline,
-  )
-where
+module Sakuin.MockRegistry where
 
+import Control.Monad.Catch qualified as Catch
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
-import Control.Monad.Catch qualified as Catch
-import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Sakuin
 
 data MockRegistryConfig = MockRegistryConfig
@@ -145,12 +132,12 @@ generateMockRegistry config = registry
     entries =
       Map.fromList
         [ (spHash path, makeEntry index path paths externals)
-          | (index, path) <- zip [0 ..] paths
+        | (index, path) <- zip [0 ..] paths
         ]
     seedEntries =
       Map.fromList
         [ (spHash path, WithOrigin (seedOrigin index) path)
-          | (index, path) <- take seedCount (zip [0 ..] paths)
+        | (index, path) <- take seedCount (zip [0 ..] paths)
         ]
     seeds = Packages seedEntries
     registry =
@@ -179,7 +166,7 @@ makeEntry index path paths externals =
       at (index + 1)
         <> (if index `mod` 4 == 0 then at (index + 2) else [])
         <> (if index `mod` 7 == 6 then at (index - 1) else [])
-        & filter (\reference -> index `mod` 4 /= 3 || spHash reference < spHash path)
+          & filter (\reference -> index `mod` 4 /= 3 || spHash reference < spHash path)
     externalReferences =
       case externals of
         [] -> []
@@ -187,7 +174,10 @@ makeEntry index path paths externals =
           | index `mod` 5 == 0 -> maybeToList (listToMaybe (drop (index `mod` length externals) externals))
           | otherwise -> []
 
-expectedEntries :: Map StoreHash MockRegistryEntry -> Map StoreHash (WithOrigin StorePath) -> Map StoreHash IndexedStorePath
+expectedEntries ::
+  Map StoreHash MockRegistryEntry ->
+  Map StoreHash (WithOrigin StorePath) ->
+  Map StoreHash IndexedStorePath
 expectedEntries entries seeds = Map.mapMaybeWithKey toIndexed origins
   where
     origins =
@@ -199,7 +189,14 @@ expectedEntries entries seeds = Map.mapMaybeWithKey toIndexed origins
       entry <- Map.lookup hash entries
       pure $ IndexedStorePath pathWithOrigin (mockFiles entry)
 
-propagate :: Map StoreHash MockRegistryEntry -> Set StoreHash -> StoreHash -> Origin -> StorePath -> Map StoreHash (WithOrigin StorePath) -> Map StoreHash (WithOrigin StorePath)
+propagate ::
+  Map StoreHash MockRegistryEntry ->
+  Set StoreHash ->
+  StoreHash ->
+  Origin ->
+  StorePath ->
+  Map StoreHash (WithOrigin StorePath) ->
+  Map StoreHash (WithOrigin StorePath)
 propagate entries visited seedHash seed path accumulated
   | Set.member hash visited = accumulated
   | otherwise =

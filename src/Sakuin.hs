@@ -1,14 +1,10 @@
 module Sakuin
-  ( module Sakuin.Pipeline,
-    module Sakuin.Types,
-    decodeListing,
-    parseListing,
-    parsePackages,
+  ( module Sakuin.Types,
     queryAllScopes,
+    runPipeline,
   )
 where
 
-import Sakuin.Hydra (decodeListing, parseListing)
-import Sakuin.NixEnv
-import Sakuin.Pipeline
+import Sakuin.NixEnv (queryAllScopes)
+import Sakuin.Pipeline (runPipeline)
 import Sakuin.Types

@@ -4,6 +4,7 @@ import Codec.Compression.Lzma qualified as Lzma
 import Codec.Compression.Zstd qualified as Zstd
 import Data.Map qualified as Map
 import Sakuin
+import Sakuin.Hydra
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 

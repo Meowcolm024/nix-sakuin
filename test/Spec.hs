@@ -8,4 +8,11 @@ import Test.Tasty (defaultMain, testGroup)
 main :: IO ()
 main =
   defaultMain $
-    testGroup "nix-sakuin" [TypesSpec.tests, NixEnvSpec.tests, HydraSpec.tests, MockRegistrySpec.tests, PipelineSpec.tests]
+    testGroup
+      "nix-sakuin"
+      [ TypesSpec.tests,
+        NixEnvSpec.tests,
+        HydraSpec.tests,
+        MockRegistrySpec.tests,
+        PipelineSpec.tests
+      ]
