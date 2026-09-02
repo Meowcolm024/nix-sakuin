@@ -49,6 +49,7 @@ common shared
     containers,
     data-default,
     directory,
+    exceptions,
     http-client,
     http-client-tls,
     http-types,
@@ -65,6 +66,7 @@ common shared
     stm,
     text,
     transformers,
+    unliftio-core,
     zstd,
 
   default-language: GHC2021

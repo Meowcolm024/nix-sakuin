@@ -14,7 +14,7 @@ data StorePath = StorePath
     spHash :: StoreHash,
     spName :: Text
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 parseStorePath :: Text -> Maybe StorePath
 parseStorePath path = do
@@ -53,13 +53,13 @@ data Origin = Origin
     orToplevel :: Bool,
     orSystem :: Text
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data WithOrigin a = WithOrigin
   { origin :: Origin,
     value :: a
   }
-  deriving stock (Show, Functor, Foldable, Traversable)
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 newtype Packages = Packages (Map StoreHash (WithOrigin StorePath))
   deriving newtype (Show, Semigroup, Monoid)
@@ -117,3 +117,12 @@ instance FromJSON FileListing where
 class (Monad m) => MonadCache m where
   fetchNarinfo :: StorePath -> m (Maybe NarInfo)
   fetchListing :: StorePath -> m (Maybe FileNode)
+
+class (Monad m) => MonadDatabase m where
+  addToDatabase :: IndexedStorePath -> m ()
+
+data IndexedStorePath = IndexedStorePath
+  { indexedPath :: WithOrigin StorePath,
+    indexedFiles :: FileNode
+  }
+  deriving stock (Show, Eq)
