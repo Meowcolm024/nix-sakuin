@@ -109,7 +109,10 @@ test-suite nix-sakuin-test
 
   other-modules:
     Sakuin.HydraSpec
+    Sakuin.MockRegistry
+    Sakuin.MockRegistrySpec
     Sakuin.NixEnvSpec
+    Sakuin.PipelineSpec
     Sakuin.TypesSpec
 
   build-depends:
