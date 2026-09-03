@@ -1,5 +1,6 @@
 module Sakuin
   ( module Sakuin.Types,
+    module Sakuin.Log,
     queryAllScopes,
     reportProgress,
     runPipeline,
@@ -8,6 +9,7 @@ module Sakuin
 where
 
 import Sakuin.NixEnv (queryAllScopes)
+import Sakuin.Log
 import Sakuin.Pipeline (runPipeline, runPipelineWithProgress)
 import Sakuin.Progress (reportProgress)
 import Sakuin.Types

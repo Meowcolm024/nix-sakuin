@@ -10,19 +10,20 @@ import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
 import Effectful.Dispatch.Dynamic (interpret)
-import Effectful.Exception (try)
+import Effectful.Exception (displayException, try)
 import Effectful.Fail
 import Effectful.Reader.Static
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status
 import Network.URI (URI, parseURI)
+import Sakuin.Log (Log, logErr, logWarn)
 import Sakuin.Types
 import System.Random (randomRIO)
 
 runHydra ::
   forall es a.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Fail :> es) =>
+  (Concurrent :> es, Reader Manager :> es, IOE :> es, Fail :> es, Log :> es) =>
   Eff (Fetch : es) a -> Eff es a
 runHydra = interpret $ \_ -> \case
   FetchNarInfo storePath -> do
@@ -38,12 +39,14 @@ runHydra = interpret $ \_ -> \case
       Just bytes -> pure (Just bytes)
       Nothing -> fetchUri mgr (base <> ".ls.xz")
     case traverse (parseListing . decodeListing) body of
-      Left err -> fail $ "processing hash:" <> T.unpack (spHash storePath) <> "\nerror: " <> err
+      Left _ -> do
+        logErr $ "fail to process listing for hash: " <> spHash storePath
+        pure Nothing
       Right listing -> pure listing
 
 fetchUri ::
   forall es.
-  (Concurrent :> es, IOE :> es, Fail :> es) =>
+  (Concurrent :> es, IOE :> es, Fail :> es, Log :> es) =>
   Manager -> Text -> Eff es (Maybe LBS.ByteString)
 fetchUri mgr uri = parseURI' uri >>= (`fetch` mgr)
   where
@@ -78,13 +81,15 @@ decodeResponseBody headers body
   | lookup hContentEncoding headers == Just "br" = Brotli.decompress body
   | otherwise = body
 
-fetch :: forall es. (Concurrent :> es, IOE :> es) => URI -> Manager -> Eff es (Maybe LBS.ByteString)
+fetch :: forall es. (Concurrent :> es, IOE :> es, Log :> es) => URI -> Manager -> Eff es (Maybe LBS.ByteString)
 fetch uri mgr = go 0
   where
     maxAttempts = 5 :: Int
     -- simple retry logic
-    retry attempt
-      | attempt + 1 >= maxAttempts = pure Nothing
+    retry attempt failure
+      | attempt + 1 >= maxAttempts = do
+          logWarn $ "giving up fetching " <> T.pack (show uri) <> ": " <> failure
+          pure Nothing
       | otherwise = do
           let maximumDelay = min 5000000 (50000 * (2 ^ attempt))
           delay <- liftIO $ randomRIO (0, maximumDelay)
@@ -93,9 +98,12 @@ fetch uri mgr = go 0
     go attempt = do
       result <- try @HttpException (fetchNoRetry uri mgr)
       case result of
-        Left _ -> retry attempt
+        Left err -> retry attempt (T.pack $ displayException err)
         Right (status, headers, body)
           | statusIsSuccessful status -> pure . Just $ decodeResponseBody headers body
           | status == status404 -> pure Nothing
-          | status == status408 || status == status429 || statusIsServerError status -> retry attempt
-          | otherwise -> pure Nothing
+          | status == status408 || status == status429 || statusIsServerError status ->
+              retry attempt ("HTTP " <> T.pack (show $ statusCode status))
+          | otherwise -> do
+              logWarn $ "failed fetching " <> T.pack (show uri) <> ": HTTP " <> T.pack (show $ statusCode status)
+              pure Nothing

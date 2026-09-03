@@ -66,7 +66,7 @@ runMockDatabase database = interpret $ \_ -> \case
 -- in-memory database, returning everything the pipeline emitted.
 runMockPipeline :: Int -> MockRegistry -> IO (Map StoreHash IndexedStorePath)
 runMockPipeline workerCount registry =
-  runEff . runFailIO . runConcurrent $ do
+  runEff . runFailIO . runConcurrent . runLogSilent $ do
     database <- newMemoryDatabase
     runMockDatabase database . runMockCache registry $
       runPipeline workerCount (mrSeeds registry)

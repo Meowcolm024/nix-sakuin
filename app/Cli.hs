@@ -14,7 +14,7 @@ data IndexOptions = IndexOptions
     indexWorker :: Int,
     indexExtraScopes :: [Text],
     indexNoDefaultScope :: Bool,
-    indexVerbose :: Bool
+    indexVerbose :: Int
   }
   deriving stock (Show)
 
@@ -88,8 +88,17 @@ indexParser = do
             <> help "Extra scopes to index (default: haskellPackages rPackages coqPackages texlive.pkgs ocamlPackages)"
     )
       <&> (\xs -> if null xs then defaultExtraScopes else xs)
-  indexNoDefaultScope <- switch (long "no-default-scopes" <> help "Do not index default scope")
-  indexVerbose <- switch (long "verbose" <> short 'v')
+  indexNoDefaultScope <- switch (long "no-default-scope" <> help "Do not index default scope")
+  indexVerbose <-
+    optionMaybe
+      (auto @Int)
+      ( long "verbose"
+          <> metavar "LEVEL"
+          <> value 1
+          <> showDefault
+          <> help "Verbosity level (0-2)"
+      )
+      <&> fromMaybe 1
   pure $
     IndexOptions
       { indexDatabase,
