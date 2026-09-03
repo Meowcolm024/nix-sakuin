@@ -1,3 +1,5 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Index where
 
 import Cli
@@ -11,14 +13,23 @@ import Effectful.Concurrent.Async
 import Effectful.Fail
 import Effectful.Reader.Static (runReader)
 import Network.HTTP.Client.TLS
+import Path
 import Sakuin
 import Sakuin.Database
 import Sakuin.Hydra
+import System.Directory (XdgDirectory (..), createDirectoryIfMissing, getXdgDirectory)
 import System.IO
+
+getCacheDir :: IO (Path Abs Dir)
+getCacheDir = do
+  xdgCache <- parseAbsDir =<< getXdgDirectory XdgCache "nix-sakuin"
+  createDirectoryIfMissing False (fromAbsDir xdgCache)
+  pure xdgCache
 
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
   mgr <- newTlsManager
+  cacheDir <- maybe getCacheDir pure (indexDatabase opts)
   result <- bracket (setupLogger (indexVerbose opts)) (const cleanupLogger) $ \logger ->
     runEff
       . runFailIO
@@ -31,9 +42,10 @@ runIndex opts = do
           -- NOTE: Nothing represents the default scope
           let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
           pkgs@(Packages pkgs') <- queryAllScopes "<nixpkgs>" (indexSystem opts) scopes
-          logInfo $ "package count: " <> T.show (length pkgs')
+          logInfo $ "root package count: " <> T.show (length pkgs')
           runPipelineWithProgress (indexWorker opts) (Map.size <$> readMemoryDatabase database) pkgs
-        result <- readMemoryDatabase database
-        logInfo $ "done: " <> T.show (Map.size result) <> " paths indexed"
-        pure result
-  withFile "out.txt" WriteMode $ \h -> T.hPutStr h (formatDatabase result)
+        readMemoryDatabase database
+  withFile (fromAbsFile $ cacheDir </> $(mkRelFile "database.tsv")) WriteMode $
+    \h -> T.hPutStr h (formatDatabase result)
+  T.putStrLn $ "summary: " <> T.show (Map.size result) <> " paths indexed"
+  hFlush stdout

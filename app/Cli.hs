@@ -5,10 +5,11 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Version (showVersion)
 import Options.Applicative
+import Path
 import Paths_nix_sakuin (version)
 
 data IndexOptions = IndexOptions
-  { indexDatabase :: Maybe Text,
+  { indexDatabase :: Maybe (Path Abs Dir),
     indexFilterPrefix :: Maybe Text,
     indexSystem :: Maybe Text,
     indexWorker :: Int,
@@ -40,7 +41,7 @@ defaultExtraScopes =
     "ocamlPackages"
   ]
 
-optionMaybe :: (Read a) => ReadM a -> (Mod OptionFields a) -> Parser (Maybe a)
+optionMaybe :: ReadM a -> (Mod OptionFields a) -> Parser (Maybe a)
 optionMaybe r m = optional (option r m)
 
 -- Parser for index command
@@ -48,11 +49,15 @@ indexParser :: Parser IndexOptions
 indexParser = do
   indexDatabase <-
     optionMaybe
-      str
+      ( eitherReader $ \s ->
+          case parseAbsDir s of
+            Nothing -> Left "Invalid absolute path"
+            Just p -> Right p
+      )
       ( long "db"
           <> short 'd'
           <> metavar "PATH"
-          <> help "Directory where the index is stored"
+          <> help "Directory where the index is stored (default: $XDG_CACHE_HOME/nix-sakuin)"
       )
   indexFilterPrefix <-
     optionMaybe
