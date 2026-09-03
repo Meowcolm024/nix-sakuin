@@ -73,9 +73,12 @@ queryPackages nixpkgs system scope = do
         <> maybe [] (\sy -> ["--argstr", "system", T.unpack sy]) system
         <> maybe [] (\sc -> ["-A", T.unpack sc]) scope
 
-queryAllScopes :: forall es. (IOE :> es, Concurrent :> es, Fail :> es) => Text -> Maybe Text -> [Text] -> Eff es Packages
+queryAllScopes ::
+  forall es.
+  (IOE :> es, Concurrent :> es, Fail :> es) =>
+  Text -> Maybe Text -> [Maybe Text] -> Eff es Packages
 queryAllScopes nixpkgs system scopes =
   foldl' mergePackages (Packages Map.empty)
-    <$> mapConcurrently (queryPackages nixpkgs system) (Nothing : map Just scopes)
+    <$> mapConcurrently (queryPackages nixpkgs system) scopes
   where
     mergePackages (Packages a) (Packages b) = Packages (Map.unionWith preferShorter a b)

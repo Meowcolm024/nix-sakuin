@@ -1,5 +1,6 @@
 module Sakuin.Hydra where
 
+import Codec.Compression.Brotli qualified as Brotli
 import Codec.Compression.Lzma qualified as Lzma
 import Codec.Compression.Zstd.Lazy qualified as Zstd
 import Data.Aeson (eitherDecode)
@@ -13,6 +14,7 @@ import Effectful.Exception (try)
 import Effectful.Fail
 import Effectful.Reader.Static
 import Network.HTTP.Client
+import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status
 import Network.URI (URI, parseURI)
 import Sakuin.Types
@@ -25,18 +27,18 @@ runHydra ::
 runHydra = interpret $ \_ -> \case
   FetchNarInfo storePath -> do
     mgr <- ask
-    let uri = "https://cache.nixos.org/" <> (spHash storePath) <> ".narinfo"
+    let uri = "https://cache.nixos.org/" <> spHash storePath <> ".narinfo"
     bs <- fetchUri mgr uri
     pure (bs >>= parseNarInfo . LBS.toStrict)
   FetchListing storePath -> do
     mgr <- ask
-    let base = "https://cache.nixos.org/" <> (spHash storePath)
+    let base = "https://cache.nixos.org/" <> spHash storePath
     generic <- fetchUri mgr (base <> ".ls")
     body <- case generic of
       Just bytes -> pure (Just bytes)
       Nothing -> fetchUri mgr (base <> ".ls.xz")
     case traverse (parseListing . decodeListing) body of
-      Left err -> fail err
+      Left err -> fail $ "processing hash:" <> T.unpack (spHash storePath) <> "\nerror: " <> err
       Right listing -> pure listing
 
 fetchUri ::
@@ -64,11 +66,17 @@ parseListing bytes = root <$> eitherDecode bytes
 
 -- simple fetch without retry
 fetchNoRetry ::
-  forall es. (Concurrent :> es, IOE :> es) => URI -> Manager -> Eff es (Status, LBS.ByteString)
+  forall es. (Concurrent :> es, IOE :> es) => URI -> Manager -> Eff es (Status, ResponseHeaders, LBS.ByteString)
 fetchNoRetry uri mgr = do
   req <- requestFromURI uri
   response <- liftIO $ httpLbs (req {checkResponse = \_ _ -> pure ()}) mgr
-  pure (responseStatus response, responseBody response)
+  pure (responseStatus response, responseHeaders response, responseBody response)
+
+-- workaround for brotli compression from cache.nixos.org
+decodeResponseBody :: ResponseHeaders -> LBS.ByteString -> LBS.ByteString
+decodeResponseBody headers body
+  | lookup hContentEncoding headers == Just "br" = Brotli.decompress body
+  | otherwise = body
 
 fetch :: forall es. (Concurrent :> es, IOE :> es) => URI -> Manager -> Eff es (Maybe LBS.ByteString)
 fetch uri mgr = go 0
@@ -86,8 +94,8 @@ fetch uri mgr = go 0
       result <- try @HttpException (fetchNoRetry uri mgr)
       case result of
         Left _ -> retry attempt
-        Right (status, body)
-          | statusIsSuccessful status -> pure (Just body)
+        Right (status, headers, body)
+          | statusIsSuccessful status -> pure . Just $ decodeResponseBody headers body
           | status == status404 -> pure Nothing
           | status == status408 || status == status429 || statusIsServerError status -> retry attempt
           | otherwise -> pure Nothing

@@ -1,13 +1,19 @@
 module Cli where
 
+import Data.Functor ((<&>))
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Data.Version (showVersion)
 import Options.Applicative
+import Paths_nix_sakuin (version)
 
 data IndexOptions = IndexOptions
-  { indexDatabase :: Maybe FilePath,
+  { indexDatabase :: Maybe Text,
     indexFilterPrefix :: Maybe Text,
     indexSystem :: Maybe Text,
+    indexWorker :: Int,
     indexExtraScopes :: [Text],
+    indexNoDefaultScope :: Bool,
     indexVerbose :: Bool
   }
   deriving stock (Show)
@@ -22,7 +28,6 @@ data LocateOptions = LocateOptions
 data Command
   = Index IndexOptions
   | Locate LocateOptions
-  | Version
   deriving stock (Show)
 
 -- Default extra scopes
@@ -35,84 +40,96 @@ defaultExtraScopes =
     "ocamlPackages"
   ]
 
+optionMaybe :: (Read a) => ReadM a -> (Mod OptionFields a) -> Parser (Maybe a)
+optionMaybe r m = optional (option r m)
+
 -- Parser for index command
 indexParser :: Parser IndexOptions
-indexParser =
-  IndexOptions <$> db <*> fp <*> sy <*> es <*> vb
-  where
-    db =
-      optional $
+indexParser = do
+  indexDatabase <-
+    optionMaybe
+      str
+      ( long "db"
+          <> short 'd'
+          <> metavar "PATH"
+          <> help "Directory where the index is stored"
+      )
+  indexFilterPrefix <-
+    optionMaybe
+      str
+      ( long "filter-prefix"
+          <> metavar "FILTER_PREFIX"
+          <> help "Only add paths starting with PREFIX"
+      )
+  indexSystem <-
+    optionMaybe
+      str
+      ( long "system"
+          <> short 's'
+          <> metavar "PLATFORM"
+          <> help "Specify system platform for which to build the index"
+      )
+  indexWorker <-
+    optionMaybe
+      (auto @Int)
+      ( long "workers"
+          <> short 'w'
+          <> metavar "WORKERS"
+          <> value 100
+          <> showDefault
+          <> help "Number of parallel workers"
+      )
+      <&> fromMaybe 100
+  indexExtraScopes <-
+    ( many $
         strOption $
-          long "db"
-            <> short 'd'
-            <> metavar "PATH"
-            <> help "Directory where the index is stored"
-    fp =
-      optional $
-        strOption $
-          long "filter-prefix"
-            <> metavar "FILTER_PREFIX"
-            <> help "Only add paths starting with PREFIX"
-    sy =
-      optional $
-        strOption $
-          long "system"
-            <> short 's'
-            <> metavar "PLATFORM"
-            <> help "Specify system platform for which to build the index"
-    es =
-      (\xs -> if null xs then defaultExtraScopes else xs)
-        <$> ( many $
-                strOption $
-                  long "extra-scopes"
-                    <> metavar "SCOPES"
-                    <> help "Extra scopes to index [default: haskellPackages rPackages coqPackages texlive.pkgs ocamlPackages]"
-            )
-    vb = switch (long "verbose" <> short 'v')
+          long "extra-scopes"
+            <> metavar "EXTRA_SCOPES"
+            <> help "Extra scopes to index (default: haskellPackages rPackages coqPackages texlive.pkgs ocamlPackages)"
+    )
+      <&> (\xs -> if null xs then defaultExtraScopes else xs)
+  indexNoDefaultScope <- switch (long "no-default-scopes" <> help "Do not index default scope")
+  indexVerbose <- switch (long "verbose" <> short 'v')
+  pure $
+    IndexOptions
+      { indexDatabase,
+        indexFilterPrefix,
+        indexSystem,
+        indexWorker,
+        indexExtraScopes,
+        indexNoDefaultScope,
+        indexVerbose
+      }
 
 -- Parser for locate command
 locateParser :: Parser LocateOptions
-locateParser =
-  LocateOptions
-    <$> optional
-      ( strOption
-          ( long "db"
-              <> short 'd'
-              <> metavar "PATH"
-              <> help "Directory where the index is stored"
-          )
-      )
-    <*> switch
-      ( long "regex"
-          <> short 'r'
-          <> help "Treat PATTERN as regex"
-      )
-    <*> argument
+locateParser = do
+  locateDatabase <-
+    optionMaybe
       str
-      ( metavar "PATTERN"
-          <> help "Pattern to search for"
+      ( long "db"
+          <> short 'd'
+          <> metavar "PATH"
+          <> help "Directory where the index is stored"
       )
+  locateRegex <-
+    switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
+  locatePattern <-
+    strArgument (metavar "PATTERN" <> help "Pattern to search for")
+  pure $ LocateOptions locateDatabase locateRegex locatePattern
 
 -- Parser for subcommands
 commandParser :: Parser Command
-commandParser =
-  subparser (index <> locate) <|> version
+commandParser = subparser (index <> locate)
   where
-    index =
-      command
-        "index"
-        (info (Index <$> indexParser) (progDesc "Build the search index"))
-    locate =
-      command
-        "locate"
-        (info (Locate <$> locateParser) (progDesc "Locate packages by pattern"))
-    version = flag' Version (long "version" <> short 'V' <> help "Print version")
+    index = command "index" (info (Index <$> indexParser) (progDesc "Build the search index"))
+    locate = command "locate" (info (Locate <$> locateParser) (progDesc "Locate packages by pattern"))
 
 -- Main parser with global options
 parser :: ParserInfo Command
 parser =
   info
-    (commandParser <**> helper)
+    (commandParser <**> simpleVersioner ("nix-sakuin " <> showVersion version) <**> helper)
     (fullDesc <> progDesc "nix-sakuin")
 
 cliParser :: IO Command

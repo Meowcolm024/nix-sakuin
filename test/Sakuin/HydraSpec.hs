@@ -1,5 +1,6 @@
 module Sakuin.HydraSpec (tests) where
 
+import Codec.Compression.Brotli qualified as Brotli
 import Codec.Compression.Lzma qualified as Lzma
 import Codec.Compression.Zstd.Lazy qualified as Zstd
 import Data.ByteString qualified as BS
@@ -9,6 +10,7 @@ import Data.Map qualified as Map
 import Data.Maybe (isNothing)
 import Effectful
 import Effectful.Dispatch.Dynamic
+import Network.HTTP.Types.Header (hContentEncoding)
 import Sakuin
 import Sakuin.Hydra
 import Test.Tasty (TestTree, testGroup)
@@ -38,6 +40,9 @@ tests =
         listing <- LBS.readFile listingFixture
         decodeListing (Zstd.compress 3 listing) @?= listing
         decodeListing (Lzma.compress listing) @?= listing,
+      testCase "decodes a Brotli HTTP response body" $ do
+        listing <- LBS.readFile listingFixture
+        decodeResponseBody [(hContentEncoding, "br")] (Brotli.compress listing) @?= listing,
       testCase "serves fixture data from a mock cache by store hash" $ do
         narinfoBytes <- BS.readFile narinfoFixture
         listingBytes <- LBS.readFile listingFixture

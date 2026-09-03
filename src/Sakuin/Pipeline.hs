@@ -23,18 +23,13 @@ seedQueue wq (Packages m) =
 runPipeline ::
   forall es.
   (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es) =>
-  Int ->
-  Packages ->
-  Eff es ()
+  Int -> Packages -> Eff es ()
 runPipeline workerCount = runPipelineInternal workerCount Nothing
 
 runPipelineWithProgress ::
   forall es.
   (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, IOE :> es) =>
-  Int ->
-  Eff es Int ->
-  Packages ->
-  Eff es ()
+  Int -> Eff es Int -> Packages -> Eff es ()
 runPipelineWithProgress workerCount getIndexedCount =
   runPipelineInternal workerCount (Just $ reportProgress getIndexedCount)
 

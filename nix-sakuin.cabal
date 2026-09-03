@@ -24,6 +24,7 @@ common shared
     -Werror
 
   default-extensions:
+    ApplicativeDo
     DataKinds
     DerivingStrategies
     DerivingVia
@@ -39,6 +40,7 @@ common shared
   build-depends:
     aeson,
     base >=4 && <5,
+    brotli,
     bytestring,
     containers,
     data-default,
@@ -94,6 +96,7 @@ executable nix-sakuin
     -O2
     -threaded
     -rtsopts
+    -with-rtsopts=-N
     -funbox-strict-fields
 
 test-suite nix-sakuin-test
