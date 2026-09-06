@@ -42,6 +42,9 @@ finish wq = modifyTVar' (wqActive wq) (subtract 1)
 pendingCount :: WorkQueue k v -> STM Int
 pendingCount = readTVar . wqPendingCount
 
+activeCount :: WorkQueue k v -> STM Int
+activeCount = readTVar . wqActive
+
 awaitCompletion :: WorkQueue k v -> STM ()
 awaitCompletion wq = do
   isActive <- readTVar (wqActive wq)

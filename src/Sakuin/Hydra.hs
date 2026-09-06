@@ -182,7 +182,9 @@ fetch uri mgr = go 0
         Left err -> retry attempt (T.pack $ displayException err)
         Right (status, headers, body)
           | statusIsSuccessful status -> pure . Just $ decodeResponseBody headers body
-          | status == status404 -> pure Nothing
+          | status == status404 ->
+              -- not cached/available in hydra
+              pure Nothing
           | status == status408 || status == status429 || statusIsServerError status ->
               retry attempt ("HTTP " <> T.pack (show $ statusCode status))
           | otherwise -> do

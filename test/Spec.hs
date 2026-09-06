@@ -4,6 +4,7 @@ import Sakuin.LogSpec qualified as LogSpec
 import Sakuin.MockRegistrySpec qualified as MockRegistrySpec
 import Sakuin.NixEnvSpec qualified as NixEnvSpec
 import Sakuin.PipelineSpec qualified as PipelineSpec
+import Sakuin.ProgressSpec qualified as ProgressSpec
 import Sakuin.TypesSpec qualified as TypesSpec
 import Test.Tasty (defaultMain, testGroup)
 
@@ -18,5 +19,6 @@ main =
         HydraSpec.tests,
         LogSpec.tests,
         MockRegistrySpec.tests,
-        PipelineSpec.tests
+        PipelineSpec.tests,
+        ProgressSpec.tests
       ]

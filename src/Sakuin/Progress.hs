@@ -15,9 +15,14 @@ import Effectful.Exception (finally)
 import Sakuin.WorkQueue
 import System.IO (hFlush, stdout)
 
-formatProgress :: Int -> Int -> Text
-formatProgress indexed queued =
-  T.show indexed <> " paths indexed, " <> T.show queued <> " paths in queue"
+formatProgress :: Int -> Int -> Int -> Text
+formatProgress indexed queued active =
+  T.show indexed
+    <> " paths indexed, "
+    <> T.show queued
+    <> " paths in queue, "
+    <> T.show active
+    <> " active workers"
 
 reportProgress ::
   forall es k v.
@@ -29,10 +34,10 @@ reportProgress getIndexedCount queue = finally loop (liftIO $ clearLine *> hFlus
   where
     loop = forever $ do
       indexed <- getIndexedCount
-      queued <- atomically $ pendingCount queue
+      (queued, active) <- atomically $ (,) <$> pendingCount queue <*> activeCount queue
       liftIO $ do
         clearLine
-        T.putStr $ formatProgress indexed queued
+        T.putStr $ formatProgress indexed queued active
         hFlush stdout
       threadDelay 200000
     clearLine = T.putStr "\r\ESC[2K"

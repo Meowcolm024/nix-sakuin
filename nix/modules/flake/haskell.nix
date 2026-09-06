@@ -34,7 +34,20 @@
         ];
       };
 
-      packages.default = self'.packages.nix-sakuin;
+      packages.default = pkgs.symlinkJoin {
+        name = "nix-sakuin";
+        paths = [ self'.packages.nix-sakuin ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram $out/bin/nix-sakuin \
+            --prefix PATH : ${
+              lib.makeBinPath [
+                pkgs.ripgrep
+                pkgs.zstd
+              ]
+            }
+        '';
+      };
       apps.default = self'.apps.nix-sakuin;
     };
 }

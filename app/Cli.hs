@@ -13,6 +13,7 @@ data IndexOptions = IndexOptions
     indexFilterPrefix :: Maybe Text,
     indexSystem :: Maybe Text,
     indexWorker :: Int,
+    indexNixpkgsPath :: Text,
     indexExtraScopes :: [Text],
     indexNoDefaultScope :: Bool,
     indexFetchCache :: Bool,
@@ -89,6 +90,17 @@ indexParser = do
           <> help "Number of parallel workers"
       )
       <&> fromMaybe 100
+  indexNixpkgsPath <-
+    optionMaybe
+      str
+      ( long "nixpkgs"
+          <> short 'f'
+          <> metavar "NIXPKGS"
+          <> value "<nixpkgs>"
+          <> showDefault
+          <> help "Path to nixpkgs repository"
+      )
+      <&> (fromMaybe "<nixpkgs>")
   indexExtraScopes <-
     ( many $
         strOption $
@@ -101,7 +113,7 @@ indexParser = do
   indexFetchCache <-
     switch
       ( long "fetch-cache"
-          <> help "Cache fetched narinfo and listings in $TMPDIR"
+          <> help "Cache fetched narinfo and listings in $TMPDIR (or /tmp)"
       )
   indexVerbose <-
     optionMaybe
@@ -119,6 +131,7 @@ indexParser = do
         indexFilterPrefix,
         indexSystem,
         indexWorker,
+        indexNixpkgsPath,
         indexExtraScopes,
         indexNoDefaultScope,
         indexFetchCache,
@@ -133,7 +146,12 @@ locateParser = do
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
   locatePattern <-
     strArgument (metavar "PATTERN" <> help "Pattern to search for")
-  pure $ LocateOptions locateDatabase locateRegex locatePattern
+  pure $
+    LocateOptions
+      { locateDatabase,
+        locateRegex,
+        locatePattern
+      }
 
 -- Parser for subcommands
 commandParser :: Parser Command

@@ -67,7 +67,7 @@ runIndex opts = do
             scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
             queryScopes = do
               logInfo "querying root packages"
-              queryAllScopes "<nixpkgs>" (indexSystem opts) scopes
+              queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
         (fetchCache, pkgs@(Packages pkgs')) <- concurrently loadCache queryScopes
         logInfo $ "root package count: " <> T.show (length pkgs')
         runTsvDatabase database . runHydra fetchCache $ do
