@@ -13,7 +13,7 @@ import Effectful.Concurrent
 import Effectful.Dispatch.Dynamic
 import Effectful.Fail
 import Sakuin
-import Sakuin.Database
+import Sakuin.MemoryDatabase
 
 data MockRegistryConfig = MockRegistryConfig
   { mockEntryCount :: Int,

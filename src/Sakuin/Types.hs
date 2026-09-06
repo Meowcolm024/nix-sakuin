@@ -153,6 +153,9 @@ instance FromJSON FileListing where
 newtype FileLine = FileLine (Text, FileNode' ())
   deriving newtype (Show, Eq)
 
+fileLinePath :: FileLine -> Text
+fileLinePath (FileLine (path, _)) = path
+
 instance ToJSON FileLine where
   toJSON (FileLine (path, node)) = case node of
     Regular fileSize isExecutable ->

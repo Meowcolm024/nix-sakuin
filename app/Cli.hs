@@ -21,7 +21,7 @@ data IndexOptions = IndexOptions
   deriving stock (Show)
 
 data LocateOptions = LocateOptions
-  { locateDatabase :: Maybe FilePath,
+  { locateDatabase :: Maybe (Path Abs Dir),
     locateRegex :: Bool,
     locatePattern :: Text
   }
@@ -45,21 +45,24 @@ defaultExtraScopes =
 optionMaybe :: ReadM a -> (Mod OptionFields a) -> Parser (Maybe a)
 optionMaybe r m = optional (option r m)
 
+databaseOption :: Parser (Maybe (Path Abs Dir))
+databaseOption =
+  optionMaybe
+    ( eitherReader $ \s ->
+        case parseAbsDir s of
+          Nothing -> Left "Invalid absolute path"
+          Just path -> Right path
+    )
+    ( long "db"
+        <> short 'd'
+        <> metavar "PATH"
+        <> help "Directory where the index is stored (default: $XDG_CACHE_HOME/nix-sakuin)"
+    )
+
 -- Parser for index command
 indexParser :: Parser IndexOptions
 indexParser = do
-  indexDatabase <-
-    optionMaybe
-      ( eitherReader $ \s ->
-          case parseAbsDir s of
-            Nothing -> Left "Invalid absolute path"
-            Just p -> Right p
-      )
-      ( long "db"
-          <> short 'd'
-          <> metavar "PATH"
-          <> help "Directory where the index is stored (default: $XDG_CACHE_HOME/nix-sakuin)"
-      )
+  indexDatabase <- databaseOption
   indexFilterPrefix <-
     optionMaybe
       str
@@ -125,14 +128,7 @@ indexParser = do
 -- Parser for locate command
 locateParser :: Parser LocateOptions
 locateParser = do
-  locateDatabase <-
-    optionMaybe
-      str
-      ( long "db"
-          <> short 'd'
-          <> metavar "PATH"
-          <> help "Directory where the index is stored"
-      )
+  locateDatabase <- databaseOption
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
   locatePattern <-

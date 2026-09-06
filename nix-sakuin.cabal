@@ -68,12 +68,12 @@ library
   exposed-modules:
     Sakuin
     Sakuin.Database
-    Sakuin.Database.MemoryDatabase
     Sakuin.Hydra
     Sakuin.Log
     Sakuin.NixEnv
     Sakuin.Pipeline
     Sakuin.Progress
+    Sakuin.Search
     Sakuin.Types
     Sakuin.WorkQueue
 
@@ -92,6 +92,7 @@ executable nix-sakuin
     Index
     Locate
     Paths_nix_sakuin
+    Storage
 
   ghc-options:
     -O2
@@ -110,11 +111,12 @@ test-suite nix-sakuin-test
   other-modules:
     Sakuin.DatabaseSpec
     Sakuin.HydraSpec
+    Sakuin.LogSpec
     Sakuin.MockRegistry
     Sakuin.MockRegistrySpec
+    Sakuin.MemoryDatabase
     Sakuin.NixEnvSpec
     Sakuin.PipelineSpec
-    Sakuin.LogSpec
     Sakuin.TypesSpec
 
   build-depends:

@@ -20,6 +20,7 @@ import Path.IO
 import Sakuin
 import Sakuin.Database
 import Sakuin.Hydra
+import Storage
 import System.IO (hClose, hFlush, stdout)
 
 fetchCachePath :: IO (Path Abs File)
@@ -44,42 +45,37 @@ writeFetchCache entries = do
   hClose handle
   renameFile temporaryPath cachePath
 
-getCacheDir :: IO (Path Abs Dir)
-getCacheDir = do
-  xdgCache <- getXdgDir XdgCache (parseRelDir "nix-sakuin")
-  createDirIfMissing False xdgCache
-  pure xdgCache
-
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
   mgr <- newTlsManager
-  cacheDir <- maybe getCacheDir pure (indexDatabase opts)
-  initialFetchCache <- if indexFetchCache opts then Just <$> loadFetchCache else pure Nothing
+  databaseDir <- resolveDatabaseDir (indexDatabase opts)
+
+  let writeQueueCapacity = max 1 (indexWorker opts * 2)
   size <- bracket (setupLogger (indexVerbose opts)) (const cleanupLogger) $ \logger ->
     runEff
       . runFailIO
       . runConcurrent
       . runReader mgr
       . runLog logger
-      $ do
-        database <- newMemoryDatabase
-        fetchCache <- traverse newFetchCache initialFetchCache
-        runMemoryDatabase database . runHydra fetchCache $ do
-          -- NOTE: Nothing represents the default scope
-          let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
-          pkgs@(Packages pkgs') <- queryAllScopes "<nixpkgs>" (indexSystem opts) scopes
-          logInfo $ "root package count: " <> T.show (length pkgs')
-          runPipelineWithProgress (indexWorker opts) (Map.size <$> readMemoryDatabase database) pkgs
-        finalDb <- readMemoryDatabase database
+      $ withTsvDatabase writeQueueCapacity (toFilePath $ databasePath databaseDir)
+      $ \database -> do
+        let loadCache = do
+              logInfo "loading fetch cache"
+              initialFetchCache <- liftIO $ if indexFetchCache opts then Just <$> loadFetchCache else pure Nothing
+              traverse newFetchCache initialFetchCache
+            -- NOTE: Nothing represents the default scope
+            scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
+            queryScopes = do
+              logInfo "querying root packages"
+              queryAllScopes "<nixpkgs>" (indexSystem opts) scopes
+        (fetchCache, pkgs@(Packages pkgs')) <- concurrently loadCache queryScopes
+        logInfo $ "root package count: " <> T.show (length pkgs')
+        runTsvDatabase database . runHydra fetchCache $ do
+          runPipelineWithProgress (indexWorker opts) (readTsvEntryCount database) pkgs
         finalFetchCache <- traverse readFetchCache fetchCache
-        forM_ finalFetchCache $ \c -> do
-          logInfo "writing cache"
-          liftIO $ writeFetchCache c
-        logInfo "writing database"
-        liftIO $
-          LBS.writeFile
-            (fromAbsFile $ cacheDir </> [relfile|database.jsonl.zst|])
-            (encodeDatabase finalDb)
-        pure $ Map.size finalDb
+        forM_ finalFetchCache $ \cache -> do
+          logInfo "writing fetch cache"
+          liftIO $ writeFetchCache cache
+        readTsvEntryCount database
   T.putStrLn $ "summary: " <> T.show size <> " paths indexed"
   hFlush stdout

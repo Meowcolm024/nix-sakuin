@@ -11,6 +11,7 @@
 
       buildInputs = with pkgs; [
         pkg-config
+        ripgrep
         zstd
         xz
       ];
