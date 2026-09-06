@@ -15,6 +15,7 @@ data IndexOptions = IndexOptions
     indexWorker :: Int,
     indexExtraScopes :: [Text],
     indexNoDefaultScope :: Bool,
+    indexFetchCache :: Bool,
     indexVerbose :: Int
   }
   deriving stock (Show)
@@ -94,6 +95,11 @@ indexParser = do
     )
       <&> (\xs -> if null xs then defaultExtraScopes else xs)
   indexNoDefaultScope <- switch (long "no-default-scope" <> help "Do not index default scope")
+  indexFetchCache <-
+    switch
+      ( long "fetch-cache"
+          <> help "Cache fetched narinfo and listings in $TMPDIR"
+      )
   indexVerbose <-
     optionMaybe
       (auto @Int)
@@ -112,6 +118,7 @@ indexParser = do
         indexWorker,
         indexExtraScopes,
         indexNoDefaultScope,
+        indexFetchCache,
         indexVerbose
       }
 

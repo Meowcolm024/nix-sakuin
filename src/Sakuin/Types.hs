@@ -11,6 +11,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Word (Word64)
 import Effectful
 import Effectful.Dispatch.Dynamic (send)
+import GHC.Generics (Generic)
 
 type StoreHash = Text
 
@@ -21,7 +22,11 @@ data StorePath = StorePath
     spHash :: StoreHash,
     spName :: Text
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+
+instance ToJSON StorePath
+
+instance FromJSON StorePath
 
 parseStorePath :: Text -> Maybe StorePath
 parseStorePath path = do
@@ -60,13 +65,21 @@ data Origin = Origin
     orToplevel :: Bool,
     orSystem :: Text
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+
+instance ToJSON Origin
+
+instance FromJSON Origin
 
 data WithOrigin a = WithOrigin
   { origin :: Origin,
     value :: a
   }
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving stock (Show, Eq, Functor, Foldable, Traversable, Generic)
+
+instance (ToJSON a) => ToJSON (WithOrigin a)
+
+instance (FromJSON a) => FromJSON (WithOrigin a)
 
 newtype Packages = Packages (Map StoreHash (WithOrigin StorePath))
   deriving newtype (Show, Semigroup, Monoid)
@@ -76,7 +89,11 @@ data NarInfo = NarInfo
     niNarPath :: Text,
     niReferences :: [StorePath]
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+
+instance ToJSON NarInfo
+
+instance FromJSON NarInfo
 
 parseNarInfo :: ByteString -> Maybe NarInfo
 parseNarInfo bs = do
@@ -117,6 +134,15 @@ instance FromJSON FileNode where
       "directory" -> FileNode . Directory <$> o .: "entries"
       unknown -> fail $ "Unknown file node type: " <> T.unpack unknown
 
+instance ToJSON FileNode where
+  toJSON (FileNode node) = case node of
+    Regular fileSize isExecutable ->
+      object ["type" .= String "regular", "size" .= fileSize, "executable" .= isExecutable]
+    Symlink linkTarget ->
+      object ["type" .= String "symlink", "target" .= linkTarget]
+    Directory entries ->
+      object ["type" .= String "directory", "entries" .= entries]
+
 newtype FileListing = FileListing {root :: FileNode}
   deriving newtype (Show, Eq)
 
@@ -124,15 +150,27 @@ instance FromJSON FileListing where
   parseJSON = withObject "FileListing" $ \o ->
     FileListing <$> o .: "root"
 
-type FileList = [(Text, FileNode' ())]
+newtype FileLine = FileLine (Text, FileNode' ())
+  deriving newtype (Show, Eq)
+
+instance ToJSON FileLine where
+  toJSON (FileLine (path, node)) = case node of
+    Regular fileSize isExecutable ->
+      object ["path" .= path, "type" .= String "regular", "size" .= fileSize, "executable" .= isExecutable]
+    Symlink linkTarget ->
+      object ["path" .= path, "type" .= String "symlink", "target" .= linkTarget]
+    Directory () ->
+      object ["path" .= path, "type" .= String "directory"]
+
+type FileList = [FileLine]
 
 toFileList :: FileNode -> FileList
 toFileList = go ""
   where
     go path (FileNode (Regular fileSize isExecutable)) =
-      [(path, Regular fileSize isExecutable)]
+      [FileLine (path, Regular fileSize isExecutable)]
     go path (FileNode (Symlink linkTarget)) =
-      [(path, Symlink linkTarget)]
+      [FileLine (path, Symlink linkTarget)]
     go path (FileNode (Directory entries)) =
       directoryEntry
         <> foldMap
@@ -141,7 +179,7 @@ toFileList = go ""
       where
         directoryEntry
           | path == "" = []
-          | otherwise = [(path, Directory ())]
+          | otherwise = [FileLine (path, Directory ())]
     appendPath "" name = "/" <> name
     appendPath path name = path <> "/" <> name
 
@@ -149,7 +187,11 @@ data IndexedStorePath = IndexedStorePath
   { indexedPath :: WithOrigin StorePath,
     indexedFiles :: FileNode
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+
+instance ToJSON IndexedStorePath
+
+instance FromJSON IndexedStorePath
 
 data Fetch :: Effect where
   FetchNarInfo :: forall m. StorePath -> Fetch m (Maybe NarInfo)

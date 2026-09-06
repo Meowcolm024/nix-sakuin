@@ -29,8 +29,6 @@ tests =
             addToDatabase replacement
           entries <- readMemoryDatabase database
           liftIO $ Map.lookup "hash" entries @?= Just replacement
-          formatted <- formatMemoryDatabase database
-          liftIO $
-            formatted
-              @?= "hash\t/bin\tDirectory {children = ()}\nhash\t/bin/example\tRegular {size = 42, executable = False}\n"
+          encoded <- encodeMemoryDatabase database
+          liftIO $ decodeDatabase encoded @?= Right entries
     ]

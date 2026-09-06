@@ -1,9 +1,11 @@
 module Sakuin.Database.MemoryDatabase where
 
+import Codec.Compression.Zstd.Lazy qualified as Zstd
+import Data.Aeson (eitherDecode, encode)
+import Data.ByteString.Lazy (ByteString)
+import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Map (Map)
 import Data.Map.Strict qualified as Map
-import Data.Text (Text)
-import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
 import Effectful.Concurrent.STM
@@ -34,13 +36,15 @@ insertMemoryDatabase database entry =
   where
     entryHash = spHash . value . indexedPath
 
-formatDatabase :: Map StoreHash IndexedStorePath -> Text
-formatDatabase = T.unlines . foldMap formatEntry . Map.toAscList
-  where
-    formatEntry (storeHash, indexed) =
-      map (formatNode storeHash) . toFileList . indexedFiles $ indexed
-    formatNode storeHash (path, node) =
-      storeHash <> "\t" <> path <> "\t" <> T.show node
+encodeDatabase :: Map StoreHash IndexedStorePath -> ByteString
+encodeDatabase =
+  Zstd.compress 3
+    . foldMap (\entry -> encode entry <> "\n")
+    . Map.toAscList
 
-formatMemoryDatabase :: forall es. (Concurrent :> es) => MemoryDatabase -> Eff es Text
-formatMemoryDatabase database = formatDatabase <$> readMemoryDatabase database
+decodeDatabase :: ByteString -> Either String (Map StoreHash IndexedStorePath)
+decodeDatabase bytes =
+  Map.fromList <$> traverse eitherDecode (LBS8.lines $ Zstd.decompress bytes)
+
+encodeMemoryDatabase :: forall es. (Concurrent :> es) => MemoryDatabase -> Eff es ByteString
+encodeMemoryDatabase database = encodeDatabase <$> readMemoryDatabase database

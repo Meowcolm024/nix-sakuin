@@ -9,6 +9,7 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (isNothing)
 import Effectful
+import Effectful.Concurrent (runConcurrent)
 import Effectful.Dispatch.Dynamic
 import Network.HTTP.Types.Header (hContentEncoding)
 import Sakuin
@@ -43,6 +44,20 @@ tests =
       testCase "decodes a Brotli HTTP response body" $ do
         listing <- LBS.readFile listingFixture
         decodeResponseBody [(hContentEncoding, "br")] (Brotli.compress listing) @?= listing,
+      testCase "preserves independently cached narinfo and listing values" $ do
+        narinfoBytes <- BS.readFile narinfoFixture
+        listingBytes <- LBS.readFile listingFixture
+        case (parseNarInfo narinfoBytes, parseListing listingBytes) of
+          (Just narinfo, Right listing) -> do
+            snapshot <- runEff . runConcurrent $ do
+              cache <- newFetchCache Map.empty
+              let storeHash = spHash (niStorePath narinfo)
+              storeNarInfo cache storeHash (Just narinfo)
+              storeListing cache storeHash (Just listing)
+              readFetchCache cache
+            decodeFetchCache (encodeFetchCache snapshot) @?= Right snapshot
+          (Nothing, _) -> assertFailure "failed to parse narinfo fixture"
+          (_, Left err) -> assertFailure err,
       testCase "serves fixture data from a mock cache by store hash" $ do
         narinfoBytes <- BS.readFile narinfoFixture
         listingBytes <- LBS.readFile listingFixture

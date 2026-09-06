@@ -10,8 +10,8 @@ import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
 import Effectful.Exception
 import Effectful.Fail
-import Sakuin.Progress (reportProgress)
 import Sakuin.Log
+import Sakuin.Progress (reportProgress)
 import Sakuin.Types
 import Sakuin.WorkQueue
 
