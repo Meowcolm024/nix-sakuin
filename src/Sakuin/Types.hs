@@ -8,10 +8,13 @@ import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
+import Data.Text.IO qualified as T
 import Data.Word (Word64)
 import Effectful
 import Effectful.Dispatch.Dynamic (send)
 import GHC.Generics (Generic)
+import System.Exit (exitFailure)
+import System.IO (stderr)
 
 type StoreHash = Text
 
@@ -252,3 +255,9 @@ type instance DispatchOf Search = Dynamic
 
 searchPaths :: forall es. (Search :> es) => Text -> Bool -> TsvSearchFilter -> Eff es ()
 searchPaths pattern isRegex filters = send $ SearchPaths pattern isRegex filters
+
+class IsError e where
+  formatError :: e -> Text
+
+exitErrorIO :: (IsError e) => e -> IO a
+exitErrorIO err = T.hPutStrLn stderr ("nix-sakuin: " <> formatError err) *> exitFailure

@@ -7,14 +7,13 @@ module Sakuin
     defaultPipelineConfig,
     runPipeline,
     SearchError (..),
-    searchErrorMessage,
     runTsvSearch,
   )
 where
 
-import Sakuin.NixEnv (queryAllScopes)
 import Sakuin.Log
+import Sakuin.NixEnv (queryAllScopes)
 import Sakuin.Pipeline (PipelineConfig (..), defaultPipelineConfig, runPipeline)
 import Sakuin.Progress (reportProgress)
-import Sakuin.Search (SearchError (..), runTsvSearch, searchErrorMessage)
+import Sakuin.Search (SearchError (..), runTsvSearch)
 import Sakuin.Types

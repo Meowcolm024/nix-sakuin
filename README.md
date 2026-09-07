@@ -7,3 +7,8 @@ A reimplementation of [`nix-index`](https://github.com/nix-community/nix-index) 
 ```sh
 $ nix build .
 ```
+
+## Usage
+
+Should be similar to how `nix-index` is used.
+For more information, see `nix-sakuin --help index`, and `nix-sakuin --help locate`.

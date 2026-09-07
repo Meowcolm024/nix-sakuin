@@ -3,6 +3,7 @@ module Sakuin.Search where
 import Control.Exception qualified as Exception
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
+import Data.List (nub)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
@@ -20,11 +21,6 @@ keywordMatcher query candidate =
 
 suffixMatcher :: Text -> PathMatcher
 suffixMatcher = T.isSuffixOf
-
-keywordSuffixMatcher :: Text -> PathMatcher
-keywordSuffixMatcher query
-  | "/" `T.isInfixOf` query = suffixMatcher query
-  | otherwise = keywordMatcher query
 
 regexMatcher :: Text -> Either String PathMatcher
 regexMatcher pattern = do
@@ -68,43 +64,46 @@ ensureLeadingSlash value
   | otherwise = "/" <> value
 
 data SearchError
-  = InvalidSearchRegex String
-  | SearchProcessError String
+  = InvalidSearchRegex Text
+  | SearchProcessError Text
   deriving stock (Show, Eq)
 
-searchErrorMessage :: SearchError -> String
-searchErrorMessage = \case
-  InvalidSearchRegex message -> "invalid search regex: " <> message
-  SearchProcessError message -> message
+instance IsError SearchError where
+  formatError = \case
+    InvalidSearchRegex message -> "invalid search regex: " <> message
+    SearchProcessError message -> message
 
 runTsvSearch ::
   forall es a.
   (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Eff (Search : es) a -> Eff es a
-runTsvSearch databasePath = interpret $ \_ -> \case
+  FilePath -> Bool -> Eff (Search : es) a -> Eff es a
+runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters ->
-    searchTsvDatabase databasePath pattern isRegex filters
+    searchTsvDatabase databasePath pattern isRegex filters $
+      if isMinimal
+        then \bs -> mapM_ LBS8.putStrLn (nub $ LBS8.takeWhile (/= '\t') <$> bs)
+        else mapM_ LBS8.putStrLn
 
 searchTsvDatabase ::
   forall es.
   (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Text -> Bool -> TsvSearchFilter -> Eff es ()
-searchTsvDatabase databasePath pattern isRegex filters =
-  either (throwError . InvalidSearchRegex) runSearch (pathMatcher pattern isRegex filters)
+  FilePath -> Text -> Bool -> TsvSearchFilter -> ([LBS8.ByteString] -> IO ()) -> Eff es ()
+searchTsvDatabase databasePath pattern isRegex filters sink =
+  either (throwError . InvalidSearchRegex . T.pack) runSearch (pathMatcher pattern isRegex filters)
   where
     runSearch matchesPath = do
       result <- liftIO . Exception.try @Exception.SomeException $
         withProcessWait zstdConfig $ \zstdProcess ->
           withProcessWait (setStdout createPipe . rgConfig $ getStdout zstdProcess) $ \rgProcess -> do
             output <- LBS8.hGetContents $ getStdout rgProcess
-            mapM_ LBS8.putStrLn . filter (matchesTsvSearchFilter filters matchesPath) $ LBS8.lines output
+            sink $ filter (matchesTsvSearchFilter filters matchesPath) $ LBS8.lines output
             rgExit <- waitExitCode rgProcess
             case rgExit of
               ExitSuccess -> pure ()
               ExitFailure 1 -> pure ()
               ExitFailure code -> Exception.throwIO . userError $ "rg failed with exit code " <> show code
             checkExitCode zstdProcess
-      either (throwError . SearchProcessError . Exception.displayException) pure result
+      either (throwError . SearchProcessError . T.pack . Exception.displayException) pure result
     zstdConfig =
       setStdout createPipe $
         proc "zstd" ["--decompress", "--stdout", databasePath]

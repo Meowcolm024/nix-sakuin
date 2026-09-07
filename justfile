@@ -10,3 +10,6 @@ repl *ARGS:
 
 run *ARGS:
     cabal exec nix-sakuin -- {{ ARGS }}
+
+test:
+    cabal build && cabal test

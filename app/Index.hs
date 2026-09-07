@@ -59,11 +59,14 @@ runIndex opts = do
       . runLog logger
       $ withTsvDatabase writeQueueCapacity (toFilePath $ databasePath databaseDir)
       $ \database -> do
-        let loadCache = do
-              logInfo "loading fetch cache"
-              initialFetchCache <- liftIO $ if indexFetchCache opts then Just <$> loadFetchCache else pure Nothing
-              traverse newFetchCache initialFetchCache
-            -- NOTE: Nothing represents the default scope
+        let loadCache =
+              traverse newFetchCache
+                =<< if indexFetchCache opts
+                  then do
+                    logInfo "loading fetch cache"
+                    liftIO $ Just <$> loadFetchCache
+                  else pure Nothing
+            -- Nothing represents the default scope
             scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
             queryScopes = do
               logInfo "querying root packages"

@@ -29,6 +29,7 @@ data LocateOptions = LocateOptions
     locateTypes :: [Char],
     locateWholeName :: Bool,
     locateAtRoot :: Bool,
+    locateMinimal :: Bool,
     locatePattern :: Text
   }
   deriving stock (Show)
@@ -162,6 +163,8 @@ locateParser = do
     switch (long "whole-name" <> short 'w' <> help "Match only complete paths or path suffixes")
   locateAtRoot <-
     switch (long "at-root" <> help "Match PATTERN starting at the root of a package")
+  locateMinimal <-
+    switch (long "minimal" <> help "Only print attribute names of found files or directories")
   locatePattern <-
     strArgument (metavar "PATTERN" <> help "Pattern to search for")
   pure $
@@ -173,6 +176,7 @@ locateParser = do
         locateTypes,
         locateWholeName,
         locateAtRoot,
+        locateMinimal,
         locatePattern
       }
   where
