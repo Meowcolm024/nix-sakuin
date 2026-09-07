@@ -3,7 +3,7 @@ module Sakuin.Search where
 import Control.Exception qualified as Exception
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
-import Data.List (nub)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
@@ -81,7 +81,7 @@ runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters ->
     searchTsvDatabase databasePath pattern isRegex filters $
       if isMinimal
-        then \bs -> mapM_ LBS8.putStrLn (nub $ LBS8.takeWhile (/= '\t') <$> bs)
+        then \bs -> mapM_ LBS8.putStrLn (Set.fromList $ LBS8.takeWhile (/= '\t') <$> bs)
         else mapM_ LBS8.putStrLn
 
 searchTsvDatabase ::

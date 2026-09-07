@@ -11,5 +11,14 @@ repl *ARGS:
 run *ARGS:
     cabal exec nix-sakuin -- {{ ARGS }}
 
-test:
+profile *ARGS:
+    cabal exec -- nix-sakuin +RTS -hc -p -s -RTS {{ ARGS }}
+
+clean:
+    cabal clean && rm *.hp *.prof
+
+build:
     cabal build && cabal test
+
+build-profile:
+    cabal build --enable-profiling --profiling-detail=late exe:nix-sakuin

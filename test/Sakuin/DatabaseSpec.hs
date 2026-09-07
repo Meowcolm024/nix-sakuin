@@ -1,8 +1,12 @@
 module Sakuin.DatabaseSpec (tests) where
 
 import Codec.Compression.Zstd.Lazy qualified as Zstd
+import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy.Char8 qualified as LBS8
+import Data.List (sort)
 import Data.Map qualified as Map
+import Data.Text qualified as T
+import Data.Text.Encoding (encodeUtf8)
 import Effectful
 import Effectful.Concurrent
 import Path (toFilePath)
@@ -42,10 +46,12 @@ tests =
               @?= "example.out\t0 d\t/nix/store/hash-example/bin\nexample.out\t42 r\t/nix/store/hash-example/bin/example\n"
           liftIO $ do
             let indexed = WithOrigin entryOrigin storePath
-            LBS8.unpack (formatFileLine indexed $ FileLine ("/tool", Regular 7 True))
+            LBS8.unpack (referenceFormatFileLine indexed $ FileLine ("/tool", Regular 7 True))
               @?= "example.out\t7 x\t/nix/store/hash-example/tool\n"
-            LBS8.unpack (formatFileLine indexed $ FileLine ("/link", Symlink "tool"))
+            LBS8.unpack (referenceFormatFileLine indexed $ FileLine ("/link", Symlink "tool"))
               @?= "example.out\t0 s\t/nix/store/hash-example/link\n"
+            sort (LBS8.lines $ formatIndexedStorePath replacement)
+              @?= sort (LBS8.lines $ referenceFormatIndexedStorePath replacement)
           pure (),
       testCase "splits store paths evenly across bounded workers" $
         splitEvenly 3 ([1 .. 8] :: [Int]) @?= [[1, 2, 3], [4, 5, 6], [7, 8]],
@@ -70,3 +76,24 @@ tests =
           contents <- Zstd.decompress <$> LBS8.readFile (toFilePath path)
           contents @?= "example.out\t7 x\t/nix/store/hash-example/tool\n"
     ]
+
+-- Reference implementation retained to verify the fused tree traversal.
+referenceFormatIndexedStorePath :: IndexedStorePath -> ByteString
+referenceFormatIndexedStorePath indexed =
+  foldMap (referenceFormatFileLine $ indexedPath indexed) (toFileList $ indexedFiles indexed)
+
+referenceFormatFileLine :: WithOrigin StorePath -> FileLine -> ByteString
+referenceFormatFileLine indexed (FileLine (path, node)) =
+  LBS8.intercalate "\t" [text package, text metadata, text fullPath] <> "\n"
+  where
+    entryOrigin = origin indexed
+    storePath = value indexed
+    package = orAttr entryOrigin <> "." <> orOutput entryOrigin
+    metadata = case node of
+      Regular fileSize True -> T.pack (show fileSize) <> " x"
+      Regular fileSize False -> T.pack (show fileSize) <> " r"
+      Symlink _ -> "0 s"
+      Directory () -> "0 d"
+    fullPath =
+      spDir storePath <> "/" <> spHash storePath <> "-" <> spName storePath <> path
+    text = LBS8.fromStrict . encodeUtf8

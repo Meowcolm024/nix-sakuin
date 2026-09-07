@@ -3,6 +3,8 @@ dist
 dist-*
 cabal.project.local
 cabal.project.local~
+*.prof
+*.hp
 
 # nix
 result

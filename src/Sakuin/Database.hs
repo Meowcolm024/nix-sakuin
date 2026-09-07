@@ -4,10 +4,10 @@ import Codec.Compression.Zstd.Streaming qualified as Zstd
 import Control.Exception (SomeException)
 import Control.Exception qualified as Exception
 import Data.ByteString qualified as BS
+import Data.ByteString.Builder (Builder, byteString, char8, toLazyByteString, word64Dec)
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as LBS
-import Data.ByteString.Lazy.Char8 qualified as LBS8
-import Data.Text qualified as T
+import Data.Map qualified as Map
 import Data.Text.Encoding (encodeUtf8)
 import Effectful
 import Effectful.Concurrent.Async (wait, withAsync)
@@ -15,7 +15,7 @@ import Effectful.Concurrent.STM
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Exception (bracket, throwIO, try)
 import Sakuin.Types
-import System.IO
+import System.IO (Handle, IOMode (WriteMode), hClose, openBinaryFile)
 
 data TsvDatabase = TsvDatabase
   { tsvWriteQueue :: TBQueue (Maybe IndexedStorePath),
@@ -74,24 +74,25 @@ enqueue database item =
 
 writerLoop ::
   forall es. (Concurrent :> es, IOE :> es) => Handle -> TBQueue (Maybe IndexedStorePath) -> TVar Int -> Eff es ()
-writerLoop output queue count = liftIO (Zstd.compress 3) >>= drive False
+writerLoop output queue count = liftIO (Zstd.compress 3) >>= drive False []
   where
-    drive ending = \case
+    drive ending pending = \case
       Zstd.Produce bytes next -> do
         liftIO $ BS.hPut output bytes
-        liftIO next >>= drive ending
+        liftIO next >>= drive ending pending
       Zstd.Consume consume
         | ending -> liftIO . Exception.throwIO . userError $ "zstd requested input after end of stream"
+        | bytes : rest <- pending -> liftIO (consume bytes) >>= drive False rest
         | otherwise ->
             atomically (readTBQueue queue) >>= \case
-              Nothing -> liftIO (consume BS.empty) >>= drive True
+              Nothing -> liftIO (consume BS.empty) >>= drive True []
               Just indexed -> do
-                let bytes = LBS.toStrict $ formatIndexedStorePath indexed
+                let chunks = LBS.toChunks $ formatIndexedStorePath indexed
                 atomically $ modifyTVar' count (+ 1)
                 -- skip empty store listing line
-                if BS.null bytes
-                  then drive False (Zstd.Consume consume)
-                  else liftIO (consume bytes) >>= drive False
+                case chunks of
+                  [] -> drive False [] (Zstd.Consume consume)
+                  bytes : rest -> liftIO (consume bytes) >>= drive False rest
       Zstd.Error code message ->
         liftIO . Exception.throwIO . userError $ "zstd compression failed (" <> code <> "): " <> message
       Zstd.Done bytes -> liftIO $ BS.hPut output bytes
@@ -100,21 +101,28 @@ readTsvEntryCount :: forall es. (Concurrent :> es) => TsvDatabase -> Eff es Int
 readTsvEntryCount = readTVarIO . tsvEntryCount
 
 formatIndexedStorePath :: IndexedStorePath -> ByteString
-formatIndexedStorePath indexed =
-  foldMap (formatFileLine $ indexedPath indexed) (toFileList $ indexedFiles indexed)
+formatIndexedStorePath = toLazyByteString . formatIndexedStorePathBuilder
 
-formatFileLine :: WithOrigin StorePath -> FileLine -> ByteString
-formatFileLine indexed (FileLine (path, node)) =
-  LBS8.intercalate "\t" [text package, text metadata, text fullPath] <> "\n"
+formatIndexedStorePathBuilder :: IndexedStorePath -> Builder
+formatIndexedStorePathBuilder indexed = go True mempty (indexedFiles indexed)
   where
-    entryOrigin = origin indexed
-    storePath = value indexed
-    package = orAttr entryOrigin <> "." <> orOutput entryOrigin
-    metadata = case node of
-      Regular fileSize True -> T.pack (show fileSize) <> " x"
-      Regular fileSize False -> T.pack (show fileSize) <> " r"
-      Symlink _ -> "0 s"
-      Directory () -> "0 d"
-    fullPath =
-      spDir storePath <> "/" <> spHash storePath <> "-" <> spName storePath <> path
-    text = LBS.fromStrict . encodeUtf8
+    indexedPath' = indexedPath indexed
+    entryOrigin = origin indexedPath'
+    storePath = value indexedPath'
+    package = byteString . encodeUtf8 $ orAttr entryOrigin <> "." <> orOutput entryOrigin
+    storePrefix =
+      byteString . encodeUtf8 $
+        spDir storePath <> "/" <> spHash storePath <> "-" <> spName storePath
+
+    go isRoot path (FileNode node) = case node of
+      Regular fileSize isExecutable ->
+        line path $ word64Dec fileSize <> if isExecutable then " x" else " r"
+      Symlink _ -> line path "0 s"
+      Directory entries ->
+        (if isRoot then mempty else line path "0 d")
+          <> Map.foldMapWithKey
+            (\name child -> go False (path <> char8 '/' <> byteString (encodeUtf8 name)) child)
+            entries
+
+    line path metadata =
+      package <> char8 '\t' <> metadata <> char8 '\t' <> storePrefix <> path <> char8 '\n'

@@ -65,6 +65,9 @@ encodeFetchCache = Zstd.compress 3 . encode
 decodeFetchCache :: LBS.ByteString -> Either String (Map StoreHash FetchCacheEntry)
 decodeFetchCache = eitherDecode . Zstd.decompress
 
+cacheUri :: Text
+cacheUri = "https://cache.nixos.org/"
+
 runHydra ::
   forall es a.
   (Concurrent :> es, Reader Manager :> es, IOE :> es, Fail :> es, Log :> es) =>
@@ -77,7 +80,7 @@ runHydra fetchCache = interpret $ \_ -> \case
       Just Missing -> pure Nothing
       _ -> do
         mgr <- ask
-        let uri = "https://cache.nixos.org/" <> spHash storePath <> ".narinfo"
+        let uri = cacheUri <> spHash storePath <> ".narinfo"
         result <- (>>= parseNarInfo . LBS.toStrict) <$> fetchUri mgr uri
         forM_ fetchCache $ \cache -> storeNarInfo cache (spHash storePath) result
         pure result
@@ -88,7 +91,7 @@ runHydra fetchCache = interpret $ \_ -> \case
       Just Missing -> pure Nothing
       _ -> do
         mgr <- ask
-        let base = "https://cache.nixos.org/" <> spHash storePath
+        let base = cacheUri <> spHash storePath
         generic <- fetchUri mgr (base <> ".ls")
         body <- case generic of
           Just bytes -> pure (Just bytes)
@@ -129,12 +132,9 @@ fetchUri ::
   forall es.
   (Concurrent :> es, IOE :> es, Fail :> es, Log :> es) =>
   Manager -> Text -> Eff es (Maybe LBS.ByteString)
-fetchUri mgr uri = parseURI' uri >>= (`fetch` mgr)
-  where
-    -- TODO actual error handling
-    parseURI' plain = case parseURI (T.unpack plain) of
-      Nothing -> fail "invalid uri"
-      Just uri' -> pure uri'
+fetchUri mgr uri = case parseURI (T.unpack uri) of
+  Nothing -> fail "invalid uri" -- should be unreachable
+  Just uri' -> fetch uri' mgr
 
 decodeListing :: LBS.ByteString -> LBS.ByteString
 decodeListing bytes
