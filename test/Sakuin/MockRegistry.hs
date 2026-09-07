@@ -11,6 +11,7 @@ import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
 import Effectful.Dispatch.Dynamic
+import Effectful.Error.Static (runErrorNoCallStackWith)
 import Effectful.Fail
 import Sakuin
 import Sakuin.MemoryDatabase
@@ -66,7 +67,12 @@ runMockDatabase database = interpret $ \_ -> \case
 -- in-memory database, returning everything the pipeline emitted.
 runMockPipeline :: Int -> MockRegistry -> IO (Map StoreHash IndexedStorePath)
 runMockPipeline workerCount registry =
-  runEff . runFailIO . runConcurrent . runLogSilent $ do
+  runEff
+    . runFailIO
+    . runErrorNoCallStackWith (fail . T.unpack . formatError @PipelineError)
+    . runConcurrent
+    . runLogSilent
+    $ do
     database <- newMemoryDatabase
     runMockDatabase database . runMockCache registry $
       runPipeline defaultPipelineConfig {pipelineWorkerCount = workerCount} (mrSeeds registry)

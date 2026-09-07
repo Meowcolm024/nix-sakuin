@@ -26,10 +26,7 @@ data TsvDatabase = TsvDatabase
 withTsvDatabase ::
   forall es a.
   (Concurrent :> es, IOE :> es) =>
-  Int ->
-  FilePath ->
-  (TsvDatabase -> Eff es a) ->
-  Eff es a
+  Int -> FilePath -> (TsvDatabase -> Eff es a) -> Eff es a
 withTsvDatabase queueCapacity databasePath action =
   bracket
     (liftIO $ openBinaryFile databasePath WriteMode)
@@ -52,9 +49,7 @@ withTsvDatabase queueCapacity databasePath action =
 runTsvDatabase ::
   forall es a.
   (Concurrent :> es) =>
-  TsvDatabase ->
-  Eff (Database : es) a ->
-  Eff es a
+  TsvDatabase -> Eff (Database : es) a -> Eff es a
 runTsvDatabase database = interpret $ \_ -> \case
   AddToDatabase indexed -> insertTsvDatabase database indexed
 

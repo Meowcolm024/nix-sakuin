@@ -3,9 +3,11 @@ module Sakuin.PipelineSpec (tests) where
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map qualified as Map
+import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
 import Effectful.Dispatch.Dynamic
+import Effectful.Error.Static (runErrorNoCallStack, runErrorNoCallStackWith)
 import Effectful.Fail
 import Sakuin
 import Sakuin.Hydra (parseListing)
@@ -37,6 +39,13 @@ tests =
                   }
         actual <- runMockPipeline 2 registry
         actual @?= mockExpected registry,
+      testCase "rejects a non-positive worker count" $ do
+        let registry = generateMockRegistry defaultMockRegistryConfig
+        result <- runEff . runErrorNoCallStack . runConcurrent . runLogSilent $ do
+          database <- newMemoryDatabase
+          runMockDatabase database . runMockCache registry $
+            runPipeline defaultPipelineConfig {pipelineWorkerCount = 0} (mockSeeds registry)
+        result @?= Left (InvalidPipelineWorkerCount 0),
       testCase "filters a fixture listing during indexing" $ do
         narinfoBytes <- BS.readFile "test/assets/8x37013i8mdk7i7pcr6j45qjaclpi447.narinfo"
         listingBytes <- LBS.readFile "test/assets/8x37013i8mdk7i7pcr6j45qjaclpi447.ls"
@@ -48,7 +57,13 @@ tests =
                 runFixtureFetch = interpret $ \_ -> \case
                   FetchNarInfo _ -> pure $ Just narinfo {niReferences = []}
                   FetchListing _ -> pure $ Just listing
-            entries <- runEff . runFailIO . runConcurrent . runLogSilent $ do
+            entries <-
+              runEff
+                . runFailIO
+                . runErrorNoCallStackWith (fail . T.unpack . formatError @PipelineError)
+                . runConcurrent
+                . runLogSilent
+                $ do
               database <- newMemoryDatabase
               runMemoryDatabase database . runFixtureFetch $
                 runPipeline

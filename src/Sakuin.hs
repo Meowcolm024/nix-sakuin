@@ -1,8 +1,10 @@
 module Sakuin
   ( module Sakuin.Types,
     module Sakuin.Log,
+    NixEnvError (..),
     queryAllScopes,
     reportProgress,
+    PipelineError (..),
     PipelineConfig (..),
     defaultPipelineConfig,
     runPipeline,
@@ -12,8 +14,8 @@ module Sakuin
 where
 
 import Sakuin.Log
-import Sakuin.NixEnv (queryAllScopes)
-import Sakuin.Pipeline (PipelineConfig (..), defaultPipelineConfig, runPipeline)
+import Sakuin.NixEnv (NixEnvError (..), queryAllScopes)
+import Sakuin.Pipeline (PipelineConfig (..), PipelineError (..), defaultPipelineConfig, runPipeline)
 import Sakuin.Progress (reportProgress)
 import Sakuin.Search (SearchError (..), runTsvSearch)
 import Sakuin.Types

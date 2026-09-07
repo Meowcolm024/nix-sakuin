@@ -8,8 +8,8 @@ import Effectful
 import Effectful.Concurrent
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
+import Effectful.Error.Static
 import Effectful.Exception
-import Effectful.Fail
 import Sakuin.Log
 import Sakuin.Progress (reportProgress)
 import Sakuin.Types
@@ -29,6 +29,17 @@ defaultPipelineConfig =
       pipelineIndexedCount = Nothing
     }
 
+data PipelineError
+  = InvalidPipelineWorkerCount Int
+  | PipelineWorkerStopped
+  deriving stock (Show, Eq)
+
+instance IsError PipelineError where
+  formatError = \case
+    InvalidPipelineWorkerCount workerCount ->
+      "pipeline worker count must be positive, but was " <> T.show workerCount
+    PipelineWorkerStopped -> "pipeline worker stopped unexpectedly"
+
 seedQueue ::
   forall es.
   (Concurrent :> es) =>
@@ -38,7 +49,7 @@ seedQueue wq (Packages m) =
 
 runPipeline ::
   forall es.
-  (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, IOE :> es, Log :> es) =>
+  (Concurrent :> es, Database :> es, Error PipelineError :> es, Fetch :> es, IOE :> es, Log :> es) =>
   PipelineConfig es -> Packages -> Eff es ()
 runPipeline config =
   runPipelineInternal
@@ -48,14 +59,14 @@ runPipeline config =
 
 runPipelineInternal ::
   forall es.
-  (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, Log :> es) =>
+  (Concurrent :> es, Database :> es, Error PipelineError :> es, Fetch :> es, Log :> es) =>
   Int ->
   Maybe T.Text ->
   Maybe (WorkQueue StoreHash (WithOrigin StorePath) -> Eff es ()) ->
   Packages ->
   Eff es ()
 runPipelineInternal workerCount filterPrefix startProgress packages
-  | workerCount <= 0 = fail "pipeline worker count must be positive"
+  | workerCount <= 0 = throwError $ InvalidPipelineWorkerCount workerCount
   | otherwise = do
       logInfo $ "starting pipeline with " <> T.show workerCount <> " workers"
       wq <- newWorkQueue
@@ -75,7 +86,7 @@ runPipelineInternal workerCount filterPrefix startProgress packages
         ( waitForOutcome >>= \case
             Left () -> logInfo "pipeline complete"
             Right (_, Left err) -> throwIO err
-            Right (_, Right ()) -> fail "pipeline worker stopped unexpectedly"
+            Right (_, Right ()) -> throwError PipelineWorkerStopped
         )
         stopWorkers
 

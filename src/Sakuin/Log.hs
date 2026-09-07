@@ -1,16 +1,4 @@
-module Sakuin.Log
-  ( Log,
-    runLog,
-    runLogWith,
-    runLogSilent,
-    setupLogger,
-    cleanupLogger,
-    logM,
-    logInfo,
-    logWarn,
-    logErr,
-  )
-where
+module Sakuin.Log where
 
 import Data.Text (Text)
 import Data.Text qualified as T

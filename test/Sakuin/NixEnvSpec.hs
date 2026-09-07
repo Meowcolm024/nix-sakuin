@@ -23,4 +23,7 @@ tests =
                     "l6nadiwa0mxax8h3lk301gkl923alg25",
                     "yj989irxax60w546axvwj6y3swmkkq05"
                   ]
+    , testCase "formats nix-env failures with context" $
+        formatError (NixEnvExitFailure 17 "evaluation failed")
+          @?= "nix-env failed with exit code 17: evaluation failed"
     ]

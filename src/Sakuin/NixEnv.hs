@@ -1,16 +1,17 @@
 module Sakuin.NixEnv where
 
+import Control.Exception qualified as Exception
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
-import Data.ByteString.Lazy qualified as LB
-import Data.ByteString.Lazy.Char8 qualified as LBC
+import Data.ByteString.Lazy qualified as LBS
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding (decodeUtf8)
 import Effectful
 import Effectful.Concurrent.Async
-import Effectful.Fail
+import Effectful.Error.Static
 import Sakuin.Types
 import System.Process.Typed
 
@@ -43,18 +44,36 @@ normalizePackages pkgs = Packages $ Map.foldlWithKey' insert Map.empty pkgs
         Nothing -> acc
         Just se -> Map.insertWith preferShorter (spHash (value se)) se acc
 
-parsePackages :: LB.ByteString -> Either String Packages
+parsePackages :: LBS.ByteString -> Either String Packages
 parsePackages json = normalizePackages <$> eitherDecode json
 
-queryPackages :: forall es. (IOE :> es, Fail :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
+data NixEnvError
+  = NixEnvProcessError Text
+  | NixEnvExitFailure Int Text
+  | NixEnvDecodeError Text
+  deriving stock (Show, Eq)
+
+instance IsError NixEnvError where
+  formatError = \case
+    NixEnvProcessError message -> "failed to run nix-env: " <> message
+    NixEnvExitFailure code message ->
+      "nix-env failed with exit code " <> T.show code <> ": " <> message
+    NixEnvDecodeError message -> "failed to decode nix-env output: " <> message
+
+queryPackages :: forall es. (IOE :> es, Error NixEnvError :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
 queryPackages nixpkgs system scope = do
-  (ec, out, err) <- liftIO $ readProcess (proc "nix-env" args)
+  result <- liftIO . Exception.try @Exception.SomeException $ readProcess (proc "nix-env" args)
+  (ec, out, err) <-
+    either
+      (throwError . NixEnvProcessError . T.pack . Exception.displayException)
+      pure
+      result
   case ec of
-    ExitFailure _ ->
-      fail $ "Failed to query packages: " <> LBC.unpack err
+    ExitFailure code ->
+      throwError . NixEnvExitFailure code . decodeUtf8 $ LBS.toStrict err
     ExitSuccess ->
       case parsePackages out of
-        Left de -> fail $ "Failed to decode JSON: " <> de
+        Left de -> throwError . NixEnvDecodeError $ T.pack de
         Right val -> pure val
   where
     args =
@@ -75,7 +94,7 @@ queryPackages nixpkgs system scope = do
 
 queryAllScopes ::
   forall es.
-  (IOE :> es, Concurrent :> es, Fail :> es) =>
+  (IOE :> es, Concurrent :> es, Error NixEnvError :> es) =>
   Text -> Maybe Text -> [Maybe Text] -> Eff es Packages
 queryAllScopes nixpkgs system scopes =
   foldl' mergePackages (Packages Map.empty)

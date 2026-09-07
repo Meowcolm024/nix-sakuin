@@ -12,7 +12,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import Effectful
 import Effectful.Concurrent.Async
-import Effectful.Fail
+import Effectful.Error.Static (runErrorNoCallStackWith)
 import Effectful.Reader.Static (runReader)
 import Network.HTTP.Client.TLS
 import Path
@@ -53,7 +53,10 @@ runIndex opts = do
   let writeQueueCapacity = max 1 (indexWorker opts * 2)
   size <- bracket (setupLogger (indexVerbose opts)) (const cleanupLogger) $ \logger ->
     runEff
-      . runFailIO
+      . runErrorNoCallStackWith
+        (\(err :: NixEnvError) -> liftIO (exitErrorIO err))
+      . runErrorNoCallStackWith
+        (\(err :: PipelineError) -> liftIO (exitErrorIO err))
       . runConcurrent
       . runReader mgr
       . runLog logger
