@@ -1,0 +1,1 @@
+{"root":{"entries":{"bin":{"entries":{"alex":{"executable":true,"size":21807552,"type":"regular"}},"type":"directory"},"lib":{"entries":{"links":{"entries":{},"type":"directory"}},"type":"directory"}},"type":"directory"},"version":1}

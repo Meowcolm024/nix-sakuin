@@ -71,7 +71,13 @@ runIndex opts = do
         (fetchCache, pkgs@(Packages pkgs')) <- concurrently loadCache queryScopes
         logInfo $ "root package count: " <> T.show (length pkgs')
         runTsvDatabase database . runHydra fetchCache $ do
-          runPipelineWithProgress (indexWorker opts) (readTsvEntryCount database) pkgs
+          runPipeline
+            defaultPipelineConfig
+              { pipelineWorkerCount = indexWorker opts,
+                pipelineFilterPrefix = indexFilterPrefix opts,
+                pipelineIndexedCount = Just $ readTsvEntryCount database
+              }
+            pkgs
         finalFetchCache <- traverse readFetchCache fetchCache
         forM_ finalFetchCache $ \cache -> do
           logInfo "writing fetch cache"

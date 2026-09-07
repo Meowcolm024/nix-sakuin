@@ -11,8 +11,7 @@ import Effectful
 import Effectful.Concurrent
 import Effectful.Concurrent.Async (mapConcurrently_)
 import Effectful.Concurrent.STM
-import Effectful.Dispatch.Dynamic
-import Sakuin.Search
+import Effectful.Dispatch.Dynamic (interpret)
 import Sakuin.Types
 
 newtype MemoryDatabase = MemoryDatabase
@@ -63,17 +62,6 @@ searchMemoryDatabase workerCount database matches emit = do
           if matches (fileLinePath fileLine)
             then emit (indexedPath indexed, fileLine)
             else pure ()
-
-runMemorySearch ::
-  forall es a.
-  (Concurrent :> es) =>
-  Int ->
-  MemoryDatabase ->
-  (SearchResult -> Eff es ()) ->
-  Eff (Search : es) a ->
-  Eff es a
-runMemorySearch workerCount database emit = interpret $ \_ -> \case
-  SearchPaths matches -> searchMemoryDatabase workerCount database matches emit
 
 splitEvenly :: Int -> [a] -> [[a]]
 splitEvenly _ [] = []

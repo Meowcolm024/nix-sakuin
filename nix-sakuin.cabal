@@ -7,8 +7,8 @@ author: Meowcolm024
 extra-source-files:
   LICENSE
   README.md
-  test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.ls
-  test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo
+  test/assets/*.ls
+  test/assets/*.narinfo
   test/assets/packages.json
 
 common shared
@@ -112,12 +112,13 @@ test-suite nix-sakuin-test
     Sakuin.DatabaseSpec
     Sakuin.HydraSpec
     Sakuin.LogSpec
+    Sakuin.MemoryDatabase
     Sakuin.MockRegistry
     Sakuin.MockRegistrySpec
-    Sakuin.MemoryDatabase
     Sakuin.NixEnvSpec
     Sakuin.PipelineSpec
     Sakuin.ProgressSpec
+    Sakuin.SearchSpec
     Sakuin.TypesSpec
 
   build-depends:

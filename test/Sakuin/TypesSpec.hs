@@ -42,6 +42,24 @@ tests =
               FileNode . Directory $
                 Map.singleton "empty" (FileNode $ Directory Map.empty)
         toFileList files @?= [FileLine ("/empty", Directory ())],
+      testCase "filters a file tree to a slash-separated prefix" $ do
+        let files =
+              FileNode . Directory . Map.fromList $
+                [ ( "bin",
+                    FileNode . Directory $
+                      Map.singleton "tool" (FileNode $ Regular 7 True)
+                  ),
+                  ( "share",
+                    FileNode . Directory $
+                      Map.singleton "data" (FileNode $ Regular 12 False)
+                  )
+                ]
+        (toFileList <$> filterFileTree "/bin/" files)
+          @?= Just
+            [ FileLine ("/bin", Directory ()),
+              FileLine ("/bin/tool", Regular 7 True)
+            ]
+        filterFileTree "/missing/" files @?= Nothing,
       testCase "parses relative references in the narinfo fixture" $ do
         narinfo <- BS.readFile "test/assets/5a5lrqlgqqhfd02lp7l8gqdypcckxiqd.narinfo"
         case parseNarInfo narinfo of

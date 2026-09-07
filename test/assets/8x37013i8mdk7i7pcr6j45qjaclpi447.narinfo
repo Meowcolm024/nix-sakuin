@@ -1,0 +1,10 @@
+StorePath: /nix/store/8x37013i8mdk7i7pcr6j45qjaclpi447-alex-3.5.4.2
+URL: nar/1p4g08p2i51z71b9ninjs1qrk6vqqsci98xsy8vccldyi7s10dka.nar.zst
+Compression: zstd
+FileHash: sha256:0lwk7935md3r1irwygdg94i13pc843qvfplp6wc86kszhc9dff5r
+FileSize: 4152627
+NarHash: sha256:1p4g08p2i51z71b9ninjs1qrk6vqqsci98xsy8vccldyi7s10dka
+NarSize: 21808368
+References: 4yckv6rja0a8y0szbnpbjzqsnkczwwrc-libiconv-113 7c1wq6yczcfpq0844hgbr6fnx5szqlr4-libffi-40 8x37013i8mdk7i7pcr6j45qjaclpi447-alex-3.5.4.2 k4ml5dn62rckvisg7c305qw2mgqm3vgz-gmp-with-cxx-6.3.0 q56j1lnni5fg2x8zma8dd7bl65rl42wc-alex-3.5.4.2-data
+Deriver: bd3kp2w5m6rvqqyjanip6irblyclhkva-alex-3.5.4.2.drv
+Sig: cache.nixos.org-1:fw8vDkDEDPXkxlR3uS3FgdzisJC3WSfC/ArNT8J2fO2JJesdRr+JRVncbduirlTvvCfd6uZglf3hFawsulJKCA==

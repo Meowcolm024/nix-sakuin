@@ -1,17 +1,14 @@
 module Sakuin.DatabaseSpec (tests) where
 
 import Codec.Compression.Zstd.Lazy qualified as Zstd
-import Data.Either (isLeft)
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Map qualified as Map
 import Effectful
 import Effectful.Concurrent
-import Effectful.Concurrent.STM
 import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
 import Sakuin.MemoryDatabase
-import Sakuin.Search
 import Sakuin.Types
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -49,21 +46,7 @@ tests =
               @?= "example.out\t7 x\t/nix/store/hash-example/tool\n"
             LBS8.unpack (formatFileLine indexed $ FileLine ("/link", Symlink "tool"))
               @?= "example.out\t0 s\t/nix/store/hash-example/link\n"
-          results <- newTVarIO []
-          let collect result = atomically $ modifyTVar' results (result :)
-              runSearch matcher = do
-                atomically $ writeTVar results []
-                runMemorySearch 2 database collect $ searchPaths matcher
-                readTVarIO results
-          keywordResults <- runSearch (keywordMatcher "EXAM ple")
-          suffixResults <- runSearch (suffixMatcher "/bin/example")
-          regex <- either (liftIO . fail) pure (regexMatcher "^/bin/.*ple$")
-          regexResults <- runSearch regex
-          liftIO $ do
-            length keywordResults @?= 1
-            suffixResults @?= keywordResults
-            regexResults @?= keywordResults
-            isLeft (regexMatcher "[") @?= True,
+          pure (),
       testCase "splits store paths evenly across bounded workers" $
         splitEvenly 3 ([1 .. 8] :: [Int]) @?= [[1, 2, 3], [4, 5, 6], [7, 8]],
       testCase "streams queued database entries through zstd" $

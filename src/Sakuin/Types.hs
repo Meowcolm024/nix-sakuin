@@ -5,7 +5,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS8
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Text
+import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Word (Word64)
@@ -30,10 +30,16 @@ instance FromJSON StorePath
 
 parseStorePath :: Text -> Maybe StorePath
 parseStorePath path = do
-  (prefix, name) <- splitOnce '-' path
-  let (hash, storeDir) = splitLast '/' prefix
-  pure $ StorePath storeDir hash name
+  let (baseName, storeDir) = splitLast '/' path
+  (hash, name) <- splitOnce '-' baseName
+  if T.length hash == 32
+    && T.all (`T.elem` nixBase32Alphabet) hash
+    && not (T.null name)
+    && not ("/" `T.isInfixOf` name)
+    then pure $ StorePath storeDir hash name
+    else Nothing
   where
+    nixBase32Alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
     splitOnce c t =
       let (a, b) = T.break (== c) t
        in if T.null b
@@ -186,6 +192,17 @@ toFileList = go ""
     appendPath "" name = "/" <> name
     appendPath path name = path <> "/" <> name
 
+filterFileTree :: Text -> FileNode -> Maybe FileNode
+filterFileTree prefix = go components
+  where
+    components = Prelude.filter (not . T.null) $ T.splitOn "/" prefix
+    go [] node = Just node
+    go (component : rest) (FileNode (Directory entries)) = do
+      child <- Map.lookup component entries
+      filteredChild <- go rest child
+      pure . FileNode . Directory $ Map.singleton component filteredChild
+    go _ _ = Nothing
+
 data IndexedStorePath = IndexedStorePath
   { indexedPath :: WithOrigin StorePath,
     indexedFiles :: FileNode
@@ -215,3 +232,23 @@ type instance DispatchOf Database = Dynamic
 
 addToDatabase :: forall es. (Database :> es) => IndexedStorePath -> Eff es ()
 addToDatabase = send . AddToDatabase
+
+type PathMatcher = Text -> Bool
+
+type SearchResult = (WithOrigin StorePath, FileLine)
+
+data TsvSearchFilter = TsvSearchFilter
+  { filterPackage :: Maybe Text,
+    filterHash :: Maybe Text,
+    filterTypes :: [Char],
+    filterWholeName :: Bool,
+    filterAtRoot :: Bool
+  }
+
+data Search :: Effect where
+  SearchPaths :: forall m. Text -> Bool -> TsvSearchFilter -> Search m ()
+
+type instance DispatchOf Search = Dynamic
+
+searchPaths :: forall es. (Search :> es) => Text -> Bool -> TsvSearchFilter -> Eff es ()
+searchPaths pattern isRegex filters = send $ SearchPaths pattern isRegex filters

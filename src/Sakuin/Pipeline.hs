@@ -15,6 +15,20 @@ import Sakuin.Progress (reportProgress)
 import Sakuin.Types
 import Sakuin.WorkQueue
 
+data PipelineConfig es = PipelineConfig
+  { pipelineWorkerCount :: Int,
+    pipelineFilterPrefix :: Maybe T.Text,
+    pipelineIndexedCount :: Maybe (Eff es Int)
+  }
+
+defaultPipelineConfig :: PipelineConfig es
+defaultPipelineConfig =
+  PipelineConfig
+    { pipelineWorkerCount = 100,
+      pipelineFilterPrefix = Nothing,
+      pipelineIndexedCount = Nothing
+    }
+
 seedQueue ::
   forall es.
   (Concurrent :> es) =>
@@ -24,32 +38,30 @@ seedQueue wq (Packages m) =
 
 runPipeline ::
   forall es.
-  (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, Log :> es) =>
-  Int -> Packages -> Eff es ()
-runPipeline workerCount = runPipelineInternal workerCount Nothing
-
-runPipelineWithProgress ::
-  forall es.
   (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, IOE :> es, Log :> es) =>
-  Int -> Eff es Int -> Packages -> Eff es ()
-runPipelineWithProgress workerCount getIndexedCount =
-  runPipelineInternal workerCount (Just $ reportProgress getIndexedCount)
+  PipelineConfig es -> Packages -> Eff es ()
+runPipeline config =
+  runPipelineInternal
+    (pipelineWorkerCount config)
+    (pipelineFilterPrefix config)
+    (reportProgress <$> pipelineIndexedCount config)
 
 runPipelineInternal ::
   forall es.
   (Concurrent :> es, Database :> es, Fetch :> es, Fail :> es, Log :> es) =>
   Int ->
+  Maybe T.Text ->
   Maybe (WorkQueue StoreHash (WithOrigin StorePath) -> Eff es ()) ->
   Packages ->
   Eff es ()
-runPipelineInternal workerCount startProgress packages
+runPipelineInternal workerCount filterPrefix startProgress packages
   | workerCount <= 0 = fail "pipeline worker count must be positive"
   | otherwise = do
       logInfo $ "starting pipeline with " <> T.show workerCount <> " workers"
       wq <- newWorkQueue
       seedQueue wq packages
       progressWorker <- traverse (async . ($ wq)) startProgress
-      workers <- replicateM workerCount . async $ (worker wq addToDatabase)
+      workers <- replicateM workerCount . async $ worker wq filterPrefix addToDatabase
       let stopWorkers = do
             traverse_ cancel progressWorker
             mapM_ cancel workers
@@ -71,17 +83,19 @@ worker ::
   forall es.
   (Concurrent :> es, Fetch :> es, Log :> es) =>
   WorkQueue StoreHash (WithOrigin StorePath) ->
+  Maybe T.Text ->
   (IndexedStorePath -> Eff es ()) ->
   Eff es ()
-worker wq emit = forever $ workerOnce wq emit
+worker wq filterPrefix emit = forever $ workerOnce wq filterPrefix emit
 
 workerOnce ::
   forall es.
   (Concurrent :> es, Fetch :> es, Log :> es) =>
   WorkQueue StoreHash (WithOrigin StorePath) ->
+  Maybe T.Text ->
   (IndexedStorePath -> Eff es ()) ->
   Eff es ()
-workerOnce wq emit =
+workerOnce wq filterPrefix emit =
   bracket
     (atomically $ claim wq)
     (\_ -> atomically $ finish wq)
@@ -102,7 +116,8 @@ workerOnce wq emit =
               forM_ (annotateReferences entry info) $ \reference ->
                 addWork wq (spHash (value reference)) reference
           forM_ listing $ \files ->
-            emit $ IndexedStorePath entry files
+            forM_ (maybe (Just files) (`filterFileTree` files) filterPrefix) $ \filteredFiles ->
+              emit $ IndexedStorePath entry filteredFiles
 
 referenceOrigin :: Origin -> Origin
 referenceOrigin entryOrigin = entryOrigin {orToplevel = False}

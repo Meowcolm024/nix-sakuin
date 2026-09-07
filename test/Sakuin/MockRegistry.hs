@@ -69,7 +69,7 @@ runMockPipeline workerCount registry =
   runEff . runFailIO . runConcurrent . runLogSilent $ do
     database <- newMemoryDatabase
     runMockDatabase database . runMockCache registry $
-      runPipeline workerCount (mrSeeds registry)
+      runPipeline defaultPipelineConfig {pipelineWorkerCount = workerCount} (mrSeeds registry)
     readMemoryDatabase database
 
 mockEntries :: MockRegistry -> Map StoreHash MockRegistryEntry

@@ -24,6 +24,11 @@ data IndexOptions = IndexOptions
 data LocateOptions = LocateOptions
   { locateDatabase :: Maybe (Path Abs Dir),
     locateRegex :: Bool,
+    locatePackage :: Maybe Text,
+    locateHash :: Maybe Text,
+    locateTypes :: [Char],
+    locateWholeName :: Bool,
+    locateAtRoot :: Bool,
     locatePattern :: Text
   }
   deriving stock (Show)
@@ -144,14 +149,36 @@ locateParser = do
   locateDatabase <- databaseOption
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
+  locatePackage <-
+    optionMaybe str (long "package" <> short 'p' <> metavar "PACKAGE" <> help "Only print matches from packages whose name starts with PACKAGE")
+  locateHash <-
+    optionMaybe str (long "hash" <> metavar "HASH" <> help "Only print matches from the package with HASH")
+  locateTypes <-
+    many $
+      option
+        (eitherReader readFileType)
+        (long "type" <> short 't' <> metavar "TYPE" <> help "Only print matches of TYPE (r, x, d, or s)")
+  locateWholeName <-
+    switch (long "whole-name" <> short 'w' <> help "Match only complete paths or path suffixes")
+  locateAtRoot <-
+    switch (long "at-root" <> help "Match PATTERN starting at the root of a package")
   locatePattern <-
     strArgument (metavar "PATTERN" <> help "Pattern to search for")
   pure $
     LocateOptions
       { locateDatabase,
         locateRegex,
+        locatePackage,
+        locateHash,
+        locateTypes,
+        locateWholeName,
+        locateAtRoot,
         locatePattern
       }
+  where
+    readFileType [fileType]
+      | fileType `elem` ("rxds" :: String) = Right fileType
+    readFileType _ = Left "TYPE must be one of: r, x, d, s"
 
 -- Parser for subcommands
 commandParser :: Parser Command

@@ -7,7 +7,6 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
-import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (encodeUtf8)
 import Effectful
@@ -17,7 +16,6 @@ import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Exception (bracket, throwIO, try)
 import Sakuin.Types
 import System.IO
-import System.Process.Typed
 
 data TsvDatabase = TsvDatabase
   { tsvWriteQueue :: TBQueue (Maybe IndexedStorePath),
@@ -120,27 +118,3 @@ formatFileLine indexed (FileLine (path, node)) =
     fullPath =
       spDir storePath <> "/" <> spHash storePath <> "-" <> spName storePath <> path
     text = LBS.fromStrict . encodeUtf8
-
-searchTsvDatabase :: FilePath -> Text -> Bool -> IO ()
-searchTsvDatabase databasePath pattern isRegex =
-  withProcessWait zstdConfig $ \zstdProcess ->
-    withProcessWait (rgConfig $ getStdout zstdProcess) $ \rgProcess -> do
-      rgExit <- waitExitCode rgProcess
-      case rgExit of
-        ExitSuccess -> pure ()
-        ExitFailure 1 -> pure ()
-        ExitFailure code -> Exception.throwIO . userError $ "rg failed with exit code " <> show code
-      checkExitCode zstdProcess
-  where
-    zstdConfig =
-      setStdout createPipe $
-        proc "zstd" ["--decompress", "--stdout", databasePath]
-    rgConfig input =
-      setStdin (useHandleOpen input) $
-        proc "rg" (rgArguments pattern isRegex)
-
-rgArguments :: Text -> Bool -> [String]
-rgArguments pattern isRegex =
-  ["--text", "--no-line-number", "--no-heading", "--color", "never"]
-    <> (if isRegex then [] else ["--fixed-strings", "--ignore-case"])
-    <> ["--", T.unpack pattern]
