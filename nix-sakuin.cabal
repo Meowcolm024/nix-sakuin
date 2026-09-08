@@ -69,6 +69,7 @@ library
   exposed-modules:
     Sakuin
     Sakuin.Database
+    Sakuin.FetchCache
     Sakuin.Hydra
     Sakuin.Log
     Sakuin.NixEnv
@@ -111,6 +112,7 @@ test-suite nix-sakuin-test
 
   other-modules:
     Sakuin.DatabaseSpec
+    Sakuin.FetchCacheSpec
     Sakuin.HydraSpec
     Sakuin.LogSpec
     Sakuin.MemoryDatabase

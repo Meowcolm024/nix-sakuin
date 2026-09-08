@@ -49,8 +49,9 @@ tests =
       testCase "filters a fixture listing during indexing" $ do
         narinfoBytes <- BS.readFile "test/assets/8x37013i8mdk7i7pcr6j45qjaclpi447.narinfo"
         listingBytes <- LBS.readFile "test/assets/8x37013i8mdk7i7pcr6j45qjaclpi447.ls"
-        case (parseNarInfo narinfoBytes, parseListing listingBytes) of
-          (Just narinfo, Right listing) -> do
+        case parseNarInfo narinfoBytes of
+          Just narinfo -> do
+            listing <- runEff $ parseListing listingBytes
             let fixturePath = niStorePath narinfo
                 entryOrigin = Origin "alex" "out" True "aarch64-darwin"
                 packages = Packages $ Map.singleton (spHash fixturePath) (WithOrigin entryOrigin fixturePath)
@@ -78,6 +79,5 @@ tests =
                 [ FileLine ("/bin", Directory ()),
                   FileLine ("/bin/alex", Regular 21807552 True)
                 ]
-          (Nothing, _) -> assertFailure "failed to parse narinfo fixture"
-          (_, Left err) -> assertFailure err
+          Nothing -> assertFailure "failed to parse narinfo fixture"
     ]

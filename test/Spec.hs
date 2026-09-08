@@ -1,4 +1,5 @@
 import Sakuin.DatabaseSpec qualified as DatabaseSpec
+import Sakuin.FetchCacheSpec qualified as FetchCacheSpec
 import Sakuin.HydraSpec qualified as HydraSpec
 import Sakuin.LogSpec qualified as LogSpec
 import Sakuin.MockRegistrySpec qualified as MockRegistrySpec
@@ -15,6 +16,7 @@ main =
     testGroup
       "nix-sakuin"
       [ DatabaseSpec.tests,
+        FetchCacheSpec.tests,
         TypesSpec.tests,
         SearchSpec.tests,
         NixEnvSpec.tests,
