@@ -105,8 +105,7 @@ searchTsvDatabase databasePath pattern isRegex filters sink =
             checkExitCode zstdProcess
       either (throwError . SearchProcessError . T.pack . Exception.displayException) pure result
     zstdConfig =
-      setStdout createPipe $
-        proc "zstd" ["--decompress", "--stdout", databasePath]
+      setStdout createPipe $ proc "zstd" ["--decompress", "--stdout", databasePath]
     rgConfig input =
       setStdin (useHandleOpen input) $
         proc "rg" (rgArguments pattern isRegex)

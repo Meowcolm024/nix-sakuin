@@ -2,7 +2,6 @@ module Sakuin.Database where
 
 import Codec.Compression.Zstd.Streaming qualified as Zstd
 import Control.Exception (SomeException)
-import Control.Exception qualified as Exception
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (Builder, byteString, char8, toLazyByteString, word64Dec)
 import Data.ByteString.Lazy (ByteString)
@@ -24,9 +23,7 @@ data TsvDatabase = TsvDatabase
   }
 
 withTsvDatabase ::
-  forall es a.
-  (Concurrent :> es, IOE :> es) =>
-  Int -> FilePath -> (TsvDatabase -> Eff es a) -> Eff es a
+  forall es a. (Concurrent :> es, IOE :> es) => Int -> FilePath -> (TsvDatabase -> Eff es a) -> Eff es a
 withTsvDatabase queueCapacity databasePath action =
   bracket
     (liftIO $ openBinaryFile databasePath WriteMode)
@@ -47,9 +44,7 @@ withTsvDatabase queueCapacity databasePath action =
         pure result
 
 runTsvDatabase ::
-  forall es a.
-  (Concurrent :> es) =>
-  TsvDatabase -> Eff (Database : es) a -> Eff es a
+  forall es a. (Concurrent :> es) => TsvDatabase -> Eff (Database : es) a -> Eff es a
 runTsvDatabase database = interpret $ \_ -> \case
   AddToDatabase indexed -> insertTsvDatabase database indexed
 
@@ -76,7 +71,7 @@ writerLoop output queue count = liftIO (Zstd.compress 3) >>= drive False []
         liftIO $ BS.hPut output bytes
         liftIO next >>= drive ending pending
       Zstd.Consume consume
-        | ending -> liftIO . Exception.throwIO . userError $ "zstd requested input after end of stream"
+        | ending -> throwIO . userError $ "zstd requested input after end of stream"
         | bytes : rest <- pending -> liftIO (consume bytes) >>= drive False rest
         | otherwise ->
             atomically (readTBQueue queue) >>= \case
@@ -89,7 +84,7 @@ writerLoop output queue count = liftIO (Zstd.compress 3) >>= drive False []
                   [] -> drive False [] (Zstd.Consume consume)
                   bytes : rest -> liftIO (consume bytes) >>= drive False rest
       Zstd.Error code message ->
-        liftIO . Exception.throwIO . userError $ "zstd compression failed (" <> code <> "): " <> message
+        throwIO . userError $ "zstd compression failed (" <> code <> "): " <> message
       Zstd.Done bytes -> liftIO $ BS.hPut output bytes
 
 readTsvEntryCount :: forall es. (Concurrent :> es) => TsvDatabase -> Eff es Int

@@ -24,22 +24,15 @@ import Sakuin.Hydra
 import Storage
 import System.IO (hClose, hFlush, stdout)
 
-fetchCachePath :: IO (Path Abs File)
-fetchCachePath = do
-  tmpDir <- getTempDir
-  pure $ tmpDir </> [relfile|nix-sakuin-fetch-cache.json.zst|]
-
-loadFetchCache :: IO (Map.Map StoreHash FetchCacheEntry)
-loadFetchCache = do
-  cachePath <- fetchCachePath
+loadFetchCache :: Path Abs File -> IO (Map.Map StoreHash FetchCacheEntry)
+loadFetchCache cachePath = do
   exists <- doesFileExist cachePath
   if exists
     then either fail pure . decodeFetchCache =<< LBS.readFile (toFilePath cachePath)
     else pure Map.empty
 
-writeFetchCache :: Map.Map StoreHash FetchCacheEntry -> IO ()
-writeFetchCache entries = do
-  cachePath <- fetchCachePath
+writeFetchCache :: Path Abs File -> Map.Map StoreHash FetchCacheEntry -> IO ()
+writeFetchCache cachePath entries = do
   tmpDir <- getTempDir
   (temporaryPath, handle) <- openBinaryTempFile tmpDir "nix-sakuin-fetch-cache.tmp"
   LBS.hPut handle (encodeFetchCache entries)
@@ -53,11 +46,12 @@ withFetchCache ::
 withFetchCache enabled action
   | not enabled = runHydra action
   | otherwise = do
+      cachePath <- liftIO fetchCachePath
       logInfo "loading fetch cache"
-      initial <- liftIO loadFetchCache
+      initial <- liftIO (loadFetchCache cachePath)
       (result, finalCache) <- runHydraFetchCache initial action
       logInfo "writing fetch cache"
-      liftIO $ writeFetchCache finalCache
+      liftIO $ writeFetchCache cachePath finalCache
       pure result
 
 runIndex :: IndexOptions -> IO ()

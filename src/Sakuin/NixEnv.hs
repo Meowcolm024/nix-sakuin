@@ -60,7 +60,8 @@ instance IsError NixEnvError where
       "nix-env failed with exit code " <> T.show code <> ": " <> message
     NixEnvDecodeError message -> "failed to decode nix-env output: " <> message
 
-queryPackages :: forall es. (IOE :> es, Error NixEnvError :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
+queryPackages ::
+  forall es. (IOE :> es, Error NixEnvError :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
 queryPackages nixpkgs system scope = do
   result <- liftIO . Exception.try @Exception.SomeException $ readProcess (proc "nix-env" args)
   (ec, out, err) <-

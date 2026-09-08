@@ -26,3 +26,12 @@ ocamlPackages.ocaml.out
 ```
 
 For more information, see `nix-sakuin --help index`, and `nix-sakuin --help locate`.
+
+## Notes
+
+- I think the indexing speed is mostly dominated by network IO, so with the same
+  (parallel) worker count, it may not be noticably faster or slower (I guess).
+- The "database" is just a preformatted TSV file compressed with `zstd`. The "querying"
+  is just decompressing and piping to `rg`, followed by a filter in Haskell. The speed is
+  actually reasonable imo (except for the slow startup time of Haskell).
+- Haskell indeed eats quite a lot of memory :)

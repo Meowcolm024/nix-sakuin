@@ -26,10 +26,7 @@ formatProgress indexed queued active =
 
 reportProgress ::
   forall es k v.
-  (Concurrent :> es, IOE :> es) =>
-  Eff es Int ->
-  WorkQueue k v ->
-  Eff es ()
+  (Concurrent :> es, IOE :> es) => Eff es Int -> WorkQueue k v -> Eff es ()
 reportProgress getIndexedCount queue = finally loop (liftIO $ clearLine *> hFlush stdout)
   where
     loop = forever $ do
