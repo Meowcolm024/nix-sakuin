@@ -7,7 +7,6 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Map (Map)
 import Data.Map.Strict qualified as Map
 import Effectful
-import Effectful.Concurrent
 import Effectful.Concurrent.STM
 import GHC.Generics (Generic)
 import Sakuin.Types
@@ -42,6 +41,7 @@ emptyFetchCacheEntry = FetchCacheEntry NotFetched NotFetched
 newFetchCacheState :: forall es. (Concurrent :> es) => Map StoreHash FetchCacheEntry -> Eff es FetchCacheState
 newFetchCacheState entries = FetchCacheState <$> newTVarIO entries
 
+-- note that it loads the whole cache to memory...
 readFetchCacheState :: forall es. (Concurrent :> es) => FetchCacheState -> Eff es (Map StoreHash FetchCacheEntry)
 readFetchCacheState = readTVarIO . fetchCacheEntries
 

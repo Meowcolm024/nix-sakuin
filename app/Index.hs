@@ -12,15 +12,12 @@ import Data.Text.IO qualified as T
 import Effectful
 import Effectful.Concurrent (Concurrent, runConcurrent)
 import Effectful.Error.Static (runErrorNoCallStackWith)
-import Effectful.Reader.Static (Reader, runReader)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
 import Path
 import Path.IO
 import Sakuin
-import Sakuin.Database
 import Sakuin.FetchCache
-import Sakuin.Hydra
 import Storage
 import System.IO (hClose, hFlush, stdout)
 
@@ -41,40 +38,38 @@ writeFetchCache cachePath entries = do
 
 withFetchCache ::
   forall es a.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Log :> es) =>
-  Bool -> Eff (Fetch : es) a -> Eff es a
-withFetchCache enabled action
-  | not enabled = runHydra action
+  (Concurrent :> es, IOE :> es, Log :> es) => Bool -> Manager -> Eff (Fetch : es) a -> Eff es a
+withFetchCache enabled mgr action
+  | not enabled = runHydra mgr action
   | otherwise = do
       cachePath <- liftIO fetchCachePath
       logInfo "loading fetch cache"
       initial <- liftIO (loadFetchCache cachePath)
-      (result, finalCache) <- runHydraFetchCache initial action
+      (result, finalCache) <- runHydraFetchCache initial mgr action
       logInfo "writing fetch cache"
       liftIO $ writeFetchCache cachePath finalCache
       pure result
 
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
-  mgr <- newTlsManager
+  manager <- newTlsManager
   databaseDir <- resolveDatabaseDir (indexDatabase opts)
   let writeQueueCapacity = max 1 (indexWorker opts * 2)
+  -- Nothing represents the default scope
+  let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
 
   size <- bracket (setupLogger (indexVerbose opts)) (const cleanupLogger) $ \logger ->
     runEff
       . runErrorNoCallStackWith @NixEnvError (liftIO . exitErrorIO)
       . runErrorNoCallStackWith @PipelineError (liftIO . exitErrorIO)
       . runConcurrent
-      . runReader mgr
       . runLog logger
       . withTsvDatabase writeQueueCapacity (toFilePath $ databasePath databaseDir)
       $ \database -> do
-        -- Nothing represents the default scope
-        let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
         logInfo "querying root packages"
         pkgs@(Packages pkgs') <- queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
         logInfo $ "root package count: " <> T.show (length pkgs')
-        withFetchCache (indexFetchCache opts) . runTsvDatabase database $
+        withFetchCache (indexFetchCache opts) manager . runTsvDatabase database $
           runPipeline
             defaultPipelineConfig
               { pipelineWorkerCount = indexWorker opts,

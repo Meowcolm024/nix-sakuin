@@ -1,6 +1,5 @@
 module Sakuin.NixEnv where
 
-import Control.Exception qualified as Exception
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
 import Data.ByteString.Lazy qualified as LBS
@@ -12,6 +11,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Effectful
 import Effectful.Concurrent.Async
 import Effectful.Error.Static
+import Effectful.Exception
 import Sakuin.Types
 import System.Process.Typed
 
@@ -63,12 +63,8 @@ instance IsError NixEnvError where
 queryPackages ::
   forall es. (IOE :> es, Error NixEnvError :> es) => Text -> Maybe Text -> Maybe Text -> Eff es Packages
 queryPackages nixpkgs system scope = do
-  result <- liftIO . Exception.try @Exception.SomeException $ readProcess (proc "nix-env" args)
-  (ec, out, err) <-
-    either
-      (throwError . NixEnvProcessError . T.pack . Exception.displayException)
-      pure
-      result
+  result <- try @SomeException $ readProcess (proc "nix-env" args)
+  (ec, out, err) <- either (throwError . NixEnvProcessError . T.pack . displayException) pure result
   case ec of
     ExitFailure code ->
       throwError . NixEnvExitFailure code . decodeUtf8 $ LBS.toStrict err

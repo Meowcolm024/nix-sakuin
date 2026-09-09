@@ -19,11 +19,7 @@ runLog :: forall es a. (IOE :> es) => L.Logger -> Eff (Log : es) a -> Eff es a
 runLog logger = runLogWith $ \prio msg -> L.logL logger prio (T.unpack msg)
 
 runLogWith ::
-  forall es a.
-  (IOE :> es) =>
-  (L.Priority -> Text -> IO ()) ->
-  Eff (Log : es) a ->
-  Eff es a
+  forall es a. (IOE :> es) => (L.Priority -> Text -> IO ()) -> Eff (Log : es) a -> Eff es a
 runLogWith writeLog = interpret $ \_ (Log priority message) ->
   liftIO $ writeLog priority message
 

@@ -259,5 +259,5 @@ searchPaths pattern isRegex filters = send $ SearchPaths pattern isRegex filters
 class IsError e where
   formatError :: e -> Text
 
-exitErrorIO :: (IsError e) => e -> IO a
+exitErrorIO :: forall a e. (IsError e) => e -> IO a
 exitErrorIO err = T.hPutStrLn stderr ("nix-sakuin: " <> formatError err) *> exitFailure

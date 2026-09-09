@@ -4,8 +4,7 @@ import Cli
 import Effectful
 import Effectful.Error.Static (runErrorNoCallStackWith)
 import Path (toFilePath)
-import Sakuin.Search
-import Sakuin.Types
+import Sakuin
 import Storage
 
 runLocate :: LocateOptions -> IO ()

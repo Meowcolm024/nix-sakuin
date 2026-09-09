@@ -3,16 +3,23 @@ module Sakuin
     module Sakuin.Log,
     NixEnvError (..),
     queryAllScopes,
-    reportProgress,
+    runHydra,
+    runHydraFetchCache,
+    withTsvDatabase,
+    runTsvDatabase,
+    readTsvEntryCount,
     PipelineError (..),
     PipelineConfig (..),
     defaultPipelineConfig,
     runPipeline,
+    reportProgress,
     SearchError (..),
     runTsvSearch,
   )
 where
 
+import Sakuin.Database (readTsvEntryCount, runTsvDatabase, withTsvDatabase)
+import Sakuin.Hydra (runHydra, runHydraFetchCache)
 import Sakuin.Log
 import Sakuin.NixEnv (NixEnvError (..), queryAllScopes)
 import Sakuin.Pipeline (PipelineConfig (..), PipelineError (..), defaultPipelineConfig, runPipeline)

@@ -1,8 +1,8 @@
 module Main where
 
-import Cli
-import Index
-import Locate
+import Cli (Command (..), cliParser)
+import Index (runIndex)
+import Locate (runLocate)
 
 main :: IO ()
 main =

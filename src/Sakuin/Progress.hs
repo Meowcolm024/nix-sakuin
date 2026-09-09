@@ -1,8 +1,4 @@
-module Sakuin.Progress
-  ( formatProgress,
-    reportProgress,
-  )
-where
+module Sakuin.Progress where
 
 import Control.Monad (forever)
 import Data.Text (Text)
@@ -25,8 +21,7 @@ formatProgress indexed queued active =
     <> " active workers"
 
 reportProgress ::
-  forall es k v.
-  (Concurrent :> es, IOE :> es) => Eff es Int -> WorkQueue k v -> Eff es ()
+  forall es k v. (Concurrent :> es, IOE :> es) => Eff es Int -> WorkQueue k v -> Eff es ()
 reportProgress getIndexedCount queue = finally loop (liftIO $ clearLine *> hFlush stdout)
   where
     loop = forever $ do

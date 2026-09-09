@@ -1,6 +1,5 @@
 module Sakuin.Search where
 
-import Control.Exception qualified as Exception
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Set qualified as Set
@@ -10,6 +9,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
+import Effectful.Exception
 import Sakuin.Types
 import System.Process.Typed
 import Text.Regex.TDFA (defaultCompOpt, defaultExecOpt, matchTest)
@@ -81,29 +81,29 @@ runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters ->
     searchTsvDatabase databasePath pattern isRegex filters $
       if isMinimal
-        then \bs -> mapM_ LBS8.putStrLn (Set.fromList $ LBS8.takeWhile (/= '\t') <$> bs)
-        else mapM_ LBS8.putStrLn
+        then \bs -> mapM_ (liftIO . LBS8.putStrLn) (Set.fromList $ LBS8.takeWhile (/= '\t') <$> bs)
+        else mapM_ (liftIO . LBS8.putStrLn)
 
 searchTsvDatabase ::
   forall es.
   (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Text -> Bool -> TsvSearchFilter -> ([LBS8.ByteString] -> IO ()) -> Eff es ()
+  FilePath -> Text -> Bool -> TsvSearchFilter -> ([LBS8.ByteString] -> Eff es ()) -> Eff es ()
 searchTsvDatabase databasePath pattern isRegex filters sink =
   either (throwError . InvalidSearchRegex . T.pack) runSearch (pathMatcher pattern isRegex filters)
   where
     runSearch matchesPath = do
-      result <- liftIO . Exception.try @Exception.SomeException $
+      result <- try @SomeException $
         withProcessWait zstdConfig $ \zstdProcess ->
           withProcessWait (setStdout createPipe . rgConfig $ getStdout zstdProcess) $ \rgProcess -> do
-            output <- LBS8.hGetContents $ getStdout rgProcess
+            output <- liftIO $ LBS8.hGetContents $ getStdout rgProcess
             sink $ filter (matchesTsvSearchFilter filters matchesPath) $ LBS8.lines output
             rgExit <- waitExitCode rgProcess
             case rgExit of
               ExitSuccess -> pure ()
               ExitFailure 1 -> pure ()
-              ExitFailure code -> Exception.throwIO . userError $ "rg failed with exit code " <> show code
+              ExitFailure code -> throwIO . userError $ "rg failed with exit code " <> show code
             checkExitCode zstdProcess
-      either (throwError . SearchProcessError . T.pack . Exception.displayException) pure result
+      either (throwError . SearchProcessError . T.pack . displayException) pure result
     zstdConfig =
       setStdout createPipe $ proc "zstd" ["--decompress", "--stdout", databasePath]
     rgConfig input =

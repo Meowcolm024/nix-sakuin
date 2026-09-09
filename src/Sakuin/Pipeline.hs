@@ -3,6 +3,7 @@ module Sakuin.Pipeline where
 import Control.Monad
 import Data.Foldable (traverse_)
 import Data.Map qualified as Map
+import Data.Text (Text)
 import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
@@ -17,7 +18,7 @@ import Sakuin.WorkQueue
 
 data PipelineConfig es = PipelineConfig
   { pipelineWorkerCount :: Int,
-    pipelineFilterPrefix :: Maybe T.Text,
+    pipelineFilterPrefix :: Maybe Text,
     pipelineIndexedCount :: Maybe (Eff es Int)
   }
 
@@ -42,8 +43,7 @@ instance IsError PipelineError where
 
 seedQueue ::
   forall es.
-  (Concurrent :> es) =>
-  WorkQueue StoreHash (WithOrigin StorePath) -> Packages -> Eff es ()
+  (Concurrent :> es) => WorkQueue StoreHash (WithOrigin StorePath) -> Packages -> Eff es ()
 seedQueue wq (Packages m) =
   atomically $ mapM_ (\(k, v) -> addWork wq k v) (Map.toList m)
 
@@ -61,7 +61,7 @@ runPipelineInternal ::
   forall es.
   (Concurrent :> es, Database :> es, Error PipelineError :> es, Fetch :> es, Log :> es) =>
   Int ->
-  Maybe T.Text ->
+  Maybe Text ->
   Maybe (WorkQueue StoreHash (WithOrigin StorePath) -> Eff es ()) ->
   Packages ->
   Eff es ()
@@ -94,7 +94,7 @@ worker ::
   forall es.
   (Concurrent :> es, Fetch :> es, Log :> es) =>
   WorkQueue StoreHash (WithOrigin StorePath) ->
-  Maybe T.Text ->
+  Maybe Text ->
   (IndexedStorePath -> Eff es ()) ->
   Eff es ()
 worker wq filterPrefix emit = forever $ workerOnce wq filterPrefix emit
@@ -103,7 +103,7 @@ workerOnce ::
   forall es.
   (Concurrent :> es, Fetch :> es, Log :> es) =>
   WorkQueue StoreHash (WithOrigin StorePath) ->
-  Maybe T.Text ->
+  Maybe Text ->
   (IndexedStorePath -> Eff es ()) ->
   Eff es ()
 workerOnce wq filterPrefix emit =

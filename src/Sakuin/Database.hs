@@ -4,7 +4,6 @@ import Codec.Compression.Zstd.Streaming qualified as Zstd
 import Control.Exception (SomeException)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (Builder, byteString, char8, toLazyByteString, word64Dec)
-import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map qualified as Map
 import Data.Text.Encoding (encodeUtf8)
@@ -90,7 +89,7 @@ writerLoop output queue count = liftIO (Zstd.compress 3) >>= drive False []
 readTsvEntryCount :: forall es. (Concurrent :> es) => TsvDatabase -> Eff es Int
 readTsvEntryCount = readTVarIO . tsvEntryCount
 
-formatIndexedStorePath :: IndexedStorePath -> ByteString
+formatIndexedStorePath :: IndexedStorePath -> LBS.ByteString
 formatIndexedStorePath = toLazyByteString . formatIndexedStorePathBuilder
 
 formatIndexedStorePathBuilder :: IndexedStorePath -> Builder

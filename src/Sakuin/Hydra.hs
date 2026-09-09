@@ -14,14 +14,13 @@ import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent
 import Effectful.Dispatch.Dynamic (interpret)
-import Effectful.Exception (SomeAsyncException, displayException, fromException, try, tryJust)
-import Effectful.Reader.Static
+import Effectful.Exception
 import Network.HTTP.Client (Manager, Response, responseHeaders, responseStatus)
 import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status
 import Sakuin.FetchCache
-import Sakuin.Log (Log, logErr, logWarn)
+import Sakuin.Log
 import Sakuin.Types
 
 cacheUri :: Req.Url Req.Https
@@ -29,19 +28,20 @@ cacheUri = Req.https "cache.nixos.org"
 
 runHydra ::
   forall es a.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Log :> es) =>
-  Eff (Fetch : es) a -> Eff es a
-runHydra = interpret $ \_ -> \case
-  FetchNarInfo storePath -> fetchNarInfoFromHydra storePath
-  FetchListing storePath -> fetchListingFromHydra storePath
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  Manager -> Eff (Fetch : es) a -> Eff es a
+runHydra manager = interpret $ \_ -> \case
+  FetchNarInfo storePath -> fetchNarInfoFromHydra manager storePath
+  FetchListing storePath -> fetchListingFromHydra manager storePath
 
 runHydraFetchCache ::
   forall es a.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Log :> es) =>
+  (Concurrent :> es, IOE :> es, Log :> es) =>
   Map StoreHash FetchCacheEntry ->
+  Manager ->
   Eff (Fetch : es) a ->
   Eff es (a, Map StoreHash FetchCacheEntry)
-runHydraFetchCache initial action = do
+runHydraFetchCache initial manager action = do
   cache <- newFetchCacheState initial
   result <-
     interpret
@@ -52,7 +52,7 @@ runHydraFetchCache initial action = do
               Found narinfo -> pure (Just narinfo)
               Missing -> pure Nothing
               NotFetched -> do
-                fetched <- fetchNarInfoFromHydra storePath
+                fetched <- fetchNarInfoFromHydra manager storePath
                 storeCachedNarInfo cache (spHash storePath) fetched
                 pure fetched
           FetchListing storePath -> do
@@ -61,7 +61,7 @@ runHydraFetchCache initial action = do
               Found listing -> pure (Just listing)
               Missing -> pure Nothing
               NotFetched -> do
-                fetched <- fetchListingFromHydra storePath
+                fetched <- fetchListingFromHydra manager storePath
                 storeCachedListing cache (spHash storePath) fetched
                 pure fetched
       )
@@ -71,22 +71,20 @@ runHydraFetchCache initial action = do
 
 fetchNarInfoFromHydra ::
   forall es.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Log :> es) => StorePath -> Eff es (Maybe NarInfo)
-fetchNarInfoFromHydra storePath = do
-  mgr <- ask
-  raw <- fetch mgr (spHash storePath <> ".narinfo")
+  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe NarInfo)
+fetchNarInfoFromHydra manager storePath = do
+  raw <- fetch manager (spHash storePath <> ".narinfo")
   pure $ LBS.toStrict <$> raw >>= parseNarInfo
 
 fetchListingFromHydra ::
   forall es.
-  (Concurrent :> es, Reader Manager :> es, IOE :> es, Log :> es) => StorePath -> Eff es (Maybe FileNode)
-fetchListingFromHydra storePath = do
-  mgr <- ask
+  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe FileNode)
+fetchListingFromHydra manager storePath = do
   let base = spHash storePath
   body <-
-    fetch mgr (base <> ".ls") >>= \case
+    fetch manager (base <> ".ls") >>= \case
       Just bytes -> pure (Just bytes)
-      Nothing -> fetch mgr (base <> ".ls.xz")
+      Nothing -> fetch manager (base <> ".ls.xz")
   result <- case body of
     Nothing -> pure $ Right Nothing
     Just bytes -> fmap Just <$> decodeListing bytes

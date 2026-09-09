@@ -12,7 +12,6 @@ import Data.Maybe (isNothing)
 import Effectful
 import Effectful.Concurrent (runConcurrent)
 import Effectful.Dispatch.Dynamic
-import Effectful.Reader.Static (runReader)
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Network.HTTP.Types.Header (hContentEncoding)
 import Sakuin
@@ -66,9 +65,8 @@ tests =
             (cachedResult, snapshot) <-
               runEff
                 . runConcurrent
-                . runReader manager
                 . runLogSilent
-                $ runHydraFetchCache initialCache (fetchNarInfo cachedPath)
+                $ runHydraFetchCache initialCache manager (fetchNarInfo cachedPath)
             cachedResult @?= Just cachedNarinfo
             cachedNarInfo (Map.findWithDefault emptyFetchCacheEntry (spHash cachedPath) snapshot)
               @?= Found cachedNarinfo
