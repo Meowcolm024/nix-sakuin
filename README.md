@@ -35,3 +35,6 @@ For more information, see `nix-sakuin --help index`, and `nix-sakuin --help loca
   is just decompressing and piping to `rg`, followed by a filter in Haskell. The speed is
   actually reasonable imo (except for the slow startup time of Haskell).
 - Haskell indeed eats quite a lot of memory :)
+- The `--fetch-cache` option will cache the fetched narinfo and listings (original files) locally
+  serialized in `cbor`, and will be loaded and updated in subsequent runs. But the whole cache
+  is loaded into memory during indexing, so it would take up quite a lot of RAM (really)...

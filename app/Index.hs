@@ -21,19 +21,23 @@ import Sakuin.FetchCache
 import Storage
 import System.IO (hClose, hFlush, stdout)
 
-loadFetchCache :: Path Abs File -> IO (Map.Map StoreHash FetchCacheEntry)
+loadFetchCache ::
+  forall es. (IOE :> es, Log :> es) => Path Abs File -> Eff es (Map.Map StoreHash FetchCacheEntry)
 loadFetchCache cachePath = do
   exists <- doesFileExist cachePath
   if exists
-    then either fail pure . decodeFetchCache =<< LBS.readFile (toFilePath cachePath)
+    then
+      decodeFetchCache <$> liftIO (LBS.readFile (toFilePath cachePath)) >>= \case
+        Left err -> logWarn err *> pure Map.empty
+        Right c -> pure c
     else pure Map.empty
 
-writeFetchCache :: Path Abs File -> Map.Map StoreHash FetchCacheEntry -> IO ()
+writeFetchCache ::
+  forall es. (IOE :> es) => Path Abs File -> Map.Map StoreHash FetchCacheEntry -> Eff es ()
 writeFetchCache cachePath entries = do
   tmpDir <- getTempDir
   (temporaryPath, handle) <- openBinaryTempFile tmpDir "nix-sakuin-fetch-cache.tmp"
-  LBS.hPut handle (encodeFetchCache entries)
-  hClose handle
+  liftIO $ LBS.hPut handle (encodeFetchCache entries) *> hClose handle
   renameFile temporaryPath cachePath
 
 withFetchCache ::
@@ -44,10 +48,10 @@ withFetchCache enabled mgr action
   | otherwise = do
       cachePath <- liftIO fetchCachePath
       logInfo "loading fetch cache"
-      initial <- liftIO (loadFetchCache cachePath)
+      initial <- loadFetchCache cachePath
       (result, finalCache) <- runHydraFetchCache initial mgr action
       logInfo "writing fetch cache"
-      liftIO $ writeFetchCache cachePath finalCache
+      writeFetchCache cachePath finalCache
       pure result
 
 runIndex :: IndexOptions -> IO ()

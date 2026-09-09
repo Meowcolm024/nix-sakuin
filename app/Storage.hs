@@ -17,4 +17,4 @@ resolveDatabaseDir configured = do
 fetchCachePath :: IO (Path Abs File)
 fetchCachePath = do
   tmpDir <- getTempDir
-  pure $ tmpDir </> [relfile|nix-sakuin-fetch-cache.json.zst|]
+  pure $ tmpDir </> [relfile|nix-sakuin-fetch-cache.cbor|]

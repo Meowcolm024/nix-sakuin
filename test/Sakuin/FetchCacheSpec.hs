@@ -6,7 +6,6 @@ import Data.Map qualified as Map
 import Effectful
 import Effectful.Concurrent (runConcurrent)
 import Sakuin.FetchCache
-import Sakuin.Hydra (parseListing)
 import Sakuin.Types
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -20,12 +19,11 @@ tests =
         listingBytes <- LBS.readFile listingFixture
         case parseNarInfo narinfoBytes of
           Just narinfo -> do
-            listing <- runEff $ parseListing listingBytes
             snapshot <- runEff . runConcurrent $ do
               cache <- newFetchCacheState Map.empty
               let storeHash = spHash (niStorePath narinfo)
-              storeCachedNarInfo cache storeHash (Just narinfo)
-              storeCachedListing cache storeHash (Just listing)
+              storeCachedNarInfo cache storeHash (Found narinfoBytes)
+              storeCachedListing cache storeHash (Found $ LBS.toStrict listingBytes)
               readFetchCacheState cache
             decodeFetchCache (encodeFetchCache snapshot) @?= Right snapshot
           Nothing -> assertFailure "failed to parse narinfo fixture"

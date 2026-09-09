@@ -1,35 +1,43 @@
 module Sakuin.FetchCache where
 
-import Codec.Compression.Zstd.Lazy qualified as Zstd
-import Control.Monad (forM_)
-import Data.Aeson (FromJSON, ToJSON, eitherDecode, encode)
+import Codec.Serialise (Serialise, deserialiseOrFail, serialise)
+import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 import Effectful
 import Effectful.Concurrent.STM
 import GHC.Generics (Generic)
 import Sakuin.Types
 
-data Cached a
+data Cached
   = NotFetched
   | Missing
-  | Found a
+  | Found ByteString
   deriving stock (Show, Eq, Generic)
 
-instance (ToJSON a) => ToJSON (Cached a)
-
-instance (FromJSON a) => FromJSON (Cached a)
+instance Serialise Cached
 
 data FetchCacheEntry = FetchCacheEntry
-  { cachedNarInfo :: Cached NarInfo,
-    cachedListing :: Cached FileNode
+  { cachedNarInfo :: Cached,
+    cachedListing :: Cached
   }
   deriving stock (Show, Eq, Generic)
 
-instance ToJSON FetchCacheEntry
+instance Serialise FetchCacheEntry
 
-instance FromJSON FetchCacheEntry
+data FetchCacheFile = FetchCacheFile
+  { cacheFormatVersion :: Word,
+    cacheEntries :: Map StoreHash FetchCacheEntry
+  }
+  deriving stock (Show, Eq, Generic)
+
+instance Serialise FetchCacheFile
+
+fetchCacheFormatVersion :: Word
+fetchCacheFormatVersion = 1
 
 newtype FetchCacheState = FetchCacheState
   { fetchCacheEntries :: TVar (Map StoreHash FetchCacheEntry)
@@ -45,32 +53,34 @@ newFetchCacheState entries = FetchCacheState <$> newTVarIO entries
 readFetchCacheState :: forall es. (Concurrent :> es) => FetchCacheState -> Eff es (Map StoreHash FetchCacheEntry)
 readFetchCacheState = readTVarIO . fetchCacheEntries
 
-lookupCachedNarInfo :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Eff es (Cached NarInfo)
+lookupCachedNarInfo :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Eff es Cached
 lookupCachedNarInfo cache storeHash =
   cachedNarInfo . Map.findWithDefault emptyFetchCacheEntry storeHash <$> readTVarIO (fetchCacheEntries cache)
 
-lookupCachedListing :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Eff es (Cached FileNode)
+lookupCachedListing :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Eff es Cached
 lookupCachedListing cache storeHash =
   cachedListing . Map.findWithDefault emptyFetchCacheEntry storeHash <$> readTVarIO (fetchCacheEntries cache)
 
-storeCachedNarInfo :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Maybe NarInfo -> Eff es ()
+storeCachedNarInfo :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Cached -> Eff es ()
 storeCachedNarInfo cache storeHash result =
-  forM_ result $ \narinfo ->
-    atomically . modifyTVar' (fetchCacheEntries cache) $
-      Map.alter (Just . setNarInfo narinfo . maybe emptyFetchCacheEntry id) storeHash
+  atomically . modifyTVar' (fetchCacheEntries cache) $
+    Map.alter (Just . setNarInfo . maybe emptyFetchCacheEntry id) storeHash
   where
-    setNarInfo narinfo entry = entry {cachedNarInfo = Found narinfo}
+    setNarInfo entry = entry {cachedNarInfo = result}
 
-storeCachedListing :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Maybe FileNode -> Eff es ()
+storeCachedListing :: forall es. (Concurrent :> es) => FetchCacheState -> StoreHash -> Cached -> Eff es ()
 storeCachedListing cache storeHash result =
-  forM_ result $ \listing ->
-    atomically . modifyTVar' (fetchCacheEntries cache) $
-      Map.alter (Just . setListing listing . maybe emptyFetchCacheEntry id) storeHash
+  atomically . modifyTVar' (fetchCacheEntries cache) $
+    Map.alter (Just . setListing . maybe emptyFetchCacheEntry id) storeHash
   where
-    setListing listing entry = entry {cachedListing = Found listing}
+    setListing entry = entry {cachedListing = result}
 
 encodeFetchCache :: Map StoreHash FetchCacheEntry -> LBS.ByteString
-encodeFetchCache = Zstd.compress 3 . encode
+encodeFetchCache = serialise . FetchCacheFile fetchCacheFormatVersion
 
-decodeFetchCache :: LBS.ByteString -> Either String (Map StoreHash FetchCacheEntry)
-decodeFetchCache = eitherDecode . Zstd.decompress
+decodeFetchCache :: LBS.ByteString -> Either Text (Map StoreHash FetchCacheEntry)
+decodeFetchCache bytes = do
+  FetchCacheFile version entries <- either (Left . T.show) Right $ deserialiseOrFail bytes
+  if version == fetchCacheFormatVersion
+    then Right entries
+    else Left $ "unsupported fetch cache version " <> T.show version

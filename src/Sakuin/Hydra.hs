@@ -49,21 +49,22 @@ runHydraFetchCache initial manager action = do
           FetchNarInfo storePath -> do
             cached <- lookupCachedNarInfo cache (spHash storePath)
             case cached of
-              Found narinfo -> pure (Just narinfo)
+              Found bytes -> case parseNarInfo bytes of
+                Just narinfo -> pure (Just narinfo)
+                Nothing -> fetchAndCacheNarInfo cache manager storePath
               Missing -> pure Nothing
-              NotFetched -> do
-                fetched <- fetchNarInfoFromHydra manager storePath
-                storeCachedNarInfo cache (spHash storePath) fetched
-                pure fetched
+              NotFetched -> fetchAndCacheNarInfo cache manager storePath
           FetchListing storePath -> do
             cached <- lookupCachedListing cache (spHash storePath)
             case cached of
-              Found listing -> pure (Just listing)
+              Found bytes -> do
+                decodeListing (LBS.fromStrict bytes) >>= \case
+                  Right listing -> pure $ Just listing
+                  Left err -> do
+                    logWarn $ "discarding invalid cached listing for hash " <> spHash storePath <> ": " <> T.pack err
+                    fetchAndCacheListing cache manager storePath
               Missing -> pure Nothing
-              NotFetched -> do
-                fetched <- fetchListingFromHydra manager storePath
-                storeCachedListing cache (spHash storePath) fetched
-                pure fetched
+              NotFetched -> fetchAndCacheListing cache manager storePath
       )
       action
   finalCache <- readFetchCacheState cache
@@ -76,15 +77,39 @@ fetchNarInfoFromHydra manager storePath = do
   raw <- fetch manager (spHash storePath <> ".narinfo")
   pure $ LBS.toStrict <$> raw >>= parseNarInfo
 
+fetchAndCacheNarInfo ::
+  forall es.
+  (Concurrent :> es, IOE :> es, Log :> es) => FetchCacheState -> Manager -> StorePath -> Eff es (Maybe NarInfo)
+fetchAndCacheNarInfo cache manager storePath = do
+  raw <- fetch manager (spHash storePath <> ".narinfo")
+  case raw of
+    Nothing -> pure Nothing
+    Just bytes -> case parseNarInfo (LBS.toStrict bytes) of
+      Nothing -> pure Nothing
+      Just narinfo -> do
+        storeCachedNarInfo cache (spHash storePath) (Found $ LBS.toStrict bytes)
+        pure $ Just narinfo
+
 fetchListingFromHydra ::
   forall es.
   (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe FileNode)
 fetchListingFromHydra manager storePath = do
+  body <- fetchListingBytes manager storePath
+  decodeFetchedListing storePath body
+
+fetchListingBytes ::
+  forall es.
+  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe LBS.ByteString)
+fetchListingBytes manager storePath = do
   let base = spHash storePath
-  body <-
-    fetch manager (base <> ".ls") >>= \case
-      Just bytes -> pure (Just bytes)
-      Nothing -> fetch manager (base <> ".ls.xz")
+  fetch manager (base <> ".ls") >>= \case
+    Just bytes -> pure (Just bytes)
+    Nothing -> fetch manager (base <> ".ls.xz")
+
+decodeFetchedListing ::
+  forall es.
+  (Concurrent :> es, Log :> es) => StorePath -> Maybe LBS.ByteString -> Eff es (Maybe FileNode)
+decodeFetchedListing storePath body = do
   result <- case body of
     Nothing -> pure $ Right Nothing
     Just bytes -> fmap Just <$> decodeListing bytes
@@ -93,6 +118,18 @@ fetchListingFromHydra manager storePath = do
       logErr $ "failed to process listing for hash " <> spHash storePath <> ": " <> T.pack err
       pure Nothing
     Right listing -> pure listing
+
+fetchAndCacheListing ::
+  forall es.
+  (Concurrent :> es, IOE :> es, Log :> es) => FetchCacheState -> Manager -> StorePath -> Eff es (Maybe FileNode)
+fetchAndCacheListing cache manager storePath = do
+  body <- fetchListingBytes manager storePath
+  listing <- decodeFetchedListing storePath body
+  case (body, listing) of
+    (Just bytes, Just files) -> do
+      storeCachedListing cache (spHash storePath) (Found $ LBS.toStrict bytes)
+      pure $ Just files
+    _ -> pure Nothing
 
 decodeListing :: forall es. LBS.ByteString -> Eff es (Either String FileNode)
 decodeListing bytes =

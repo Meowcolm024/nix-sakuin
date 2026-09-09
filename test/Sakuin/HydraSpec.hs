@@ -54,22 +54,26 @@ tests =
         decodeResponseBody [(hContentEncoding, "br")] (Brotli.compress listing) @?= listing,
       testCase "serves cache hits" $ do
         narinfoBytes <- BS.readFile narinfoFixture
+        listingBytes <- LBS.readFile listingFixture
         case parseNarInfo narinfoBytes of
           Just cachedNarinfo -> do
             let cachedPath = niStorePath cachedNarinfo
+                compressedListing = LBS.toStrict $ Zstd.compress 3 listingBytes
                 initialCache =
                   Map.singleton
                     (spHash cachedPath)
-                    (FetchCacheEntry (Found cachedNarinfo) NotFetched)
+                    (FetchCacheEntry (Found narinfoBytes) (Found compressedListing))
             manager <- newManager defaultManagerSettings
             (cachedResult, snapshot) <-
               runEff
                 . runConcurrent
                 . runLogSilent
-                $ runHydraFetchCache initialCache manager (fetchNarInfo cachedPath)
-            cachedResult @?= Just cachedNarinfo
+                $ runHydraFetchCache initialCache manager ((,) <$> fetchNarInfo cachedPath <*> fetchListing cachedPath)
+            cachedResult @?= (Just cachedNarinfo, Just expectedListing)
             cachedNarInfo (Map.findWithDefault emptyFetchCacheEntry (spHash cachedPath) snapshot)
-              @?= Found cachedNarinfo
+              @?= Found narinfoBytes
+            cachedListing (Map.findWithDefault emptyFetchCacheEntry (spHash cachedPath) snapshot)
+              @?= Found compressedListing
           Nothing -> assertFailure "failed to parse narinfo fixture",
       testCase "serves fixture data from a mock cache by store hash" $ do
         narinfoBytes <- BS.readFile narinfoFixture
