@@ -1,7 +1,6 @@
 module Sakuin.NixEnv where
 
 import Data.Aeson
-import Data.Aeson.Key qualified as Key
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map (Map)
 import Data.Map qualified as Map
@@ -17,32 +16,32 @@ import System.Process.Typed
 
 data NixEnvPackage = NixEnvPackage
   { neSystem :: Text,
-    neOutputName :: Text,
-    neRawPath :: Maybe Text
+    neRawPath :: Map Text Text
   }
   deriving stock (Show)
 
 instance FromJSON NixEnvPackage where
   parseJSON = withObject "Package" $ \o -> do
     sys <- o .: "system"
-    onm <- o .: "outputName"
     os <- o .:? "outputs" .!= mempty
-    sp <- os .:? Key.fromText onm
-    pure $ NixEnvPackage sys onm sp
+    pure $ NixEnvPackage sys os
 
-toStoreEntry :: Attr -> NixEnvPackage -> Maybe (WithOrigin StorePath)
-toStoreEntry attr pkg = do
-  rawPath <- neRawPath pkg
-  sp <- parseStorePath rawPath
-  pure $ WithOrigin (Origin attr (neOutputName pkg) True (neSystem pkg)) sp
+toStoreEntries :: Attr -> NixEnvPackage -> [WithOrigin StorePath]
+toStoreEntries attr pkg = Map.foldrWithKey addOutput [] (neRawPath pkg)
+  where
+    addOutput outputName rawPath entries =
+      case parseStorePath rawPath of
+        Nothing -> entries
+        Just sp -> WithOrigin (Origin attr outputName True (neSystem pkg)) sp : entries
 
 normalizePackages :: Map Attr NixEnvPackage -> Packages
 normalizePackages pkgs = Packages $ Map.foldlWithKey' insert Map.empty pkgs
   where
     insert acc attr pkg =
-      case toStoreEntry attr pkg of
-        Nothing -> acc
-        Just se -> Map.insertWith preferShorter (spHash (value se)) se acc
+      foldr
+        (\se -> Map.insertWith preferShorter (spHash (value se)) se)
+        acc
+        (toStoreEntries attr pkg)
 
 parsePackages :: LBS.ByteString -> Either String Packages
 parsePackages json = normalizePackages <$> eitherDecode json

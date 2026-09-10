@@ -70,9 +70,10 @@ runIndex opts = do
       . runLog logger
       . withTsvDatabase writeQueueCapacity (toFilePath $ databasePath databaseDir)
       $ \database -> do
-        logInfo "querying root packages"
+        liftIO $ T.putStrLn "querying root packages"
+        logInfo $ "root packages scopes: " <> T.intercalate ", " (map (maybe "(default)" id) scopes)
         pkgs@(Packages pkgs') <- queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
-        logInfo $ "root package count: " <> T.show (length pkgs')
+        logInfo $ "root packages count: " <> T.show (length pkgs')
         withFetchCache (indexFetchCache opts) manager . runTsvDatabase database $
           runPipeline
             defaultPipelineConfig
