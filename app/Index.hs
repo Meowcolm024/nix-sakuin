@@ -18,27 +18,8 @@ import Path
 import Path.IO
 import Sakuin
 import Sakuin.FetchCache
-import Storage
-import System.IO (hClose, hFlush, stdout)
-
-loadFetchCache ::
-  forall es. (IOE :> es, Log :> es) => Path Abs File -> Eff es (Map.Map StoreHash FetchCacheEntry)
-loadFetchCache cachePath = do
-  exists <- doesFileExist cachePath
-  if exists
-    then
-      decodeFetchCache <$> liftIO (LBS.readFile (toFilePath cachePath)) >>= \case
-        Left err -> logWarn err *> pure Map.empty
-        Right c -> pure c
-    else pure Map.empty
-
-writeFetchCache ::
-  forall es. (IOE :> es) => Path Abs File -> Map.Map StoreHash FetchCacheEntry -> Eff es ()
-writeFetchCache cachePath entries = do
-  tmpDir <- getTempDir
-  (temporaryPath, handle) <- openBinaryTempFile tmpDir "nix-sakuin-fetch-cache.tmp"
-  liftIO $ LBS.hPut handle (encodeFetchCache entries) *> hClose handle
-  renameFile temporaryPath cachePath
+import Sakuin.Storage
+import System.IO (hFlush, stdout)
 
 withFetchCache ::
   forall es a.
@@ -46,43 +27,51 @@ withFetchCache ::
 withFetchCache enabled mgr action
   | not enabled = runHydra mgr action
   | otherwise = do
-      cachePath <- liftIO fetchCachePath
       logInfo "loading fetch cache"
-      initial <- loadFetchCache cachePath
+      cachePath <- fetchCachePath
+      exists <- doesFileExist cachePath
+      initial <-
+        if exists
+          then
+            decodeFetchCache <$> liftIO (LBS.readFile (toFilePath cachePath)) >>= \case
+              Left err -> logWarn err *> pure Map.empty
+              Right c -> pure c
+          else pure Map.empty
       (result, finalCache) <- runHydraFetchCache initial mgr action
       logInfo "writing fetch cache"
-      writeFetchCache cachePath finalCache
+      withAtomicFile cachePath $ \handle ->
+        liftIO $ LBS.hPut handle (encodeFetchCache finalCache)
       pure result
 
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
-  manager <- newTlsManager
-  databaseDir <- resolveDatabaseDir (indexDatabase opts)
   let writeQueueCapacity = max 1 (indexWorker opts * 2)
   -- Nothing represents the default scope
   let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
-
+  manager <- newTlsManager
   size <- bracket (setupLogger (indexVerbose opts)) (const cleanupLogger) $ \logger ->
     runEff
       . runErrorNoCallStackWith @NixEnvError (liftIO . exitErrorIO)
       . runErrorNoCallStackWith @PipelineError (liftIO . exitErrorIO)
       . runConcurrent
       . runLog logger
-      . withTsvDatabase writeQueueCapacity (toFilePath $ databasePath databaseDir)
-      $ \database -> do
-        liftIO $ T.putStrLn "querying root packages"
-        logInfo $ "root packages scopes: " <> T.intercalate ", " (map (maybe "(default)" id) scopes)
-        pkgs@(Packages pkgs') <- queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
-        logInfo $ "root packages count: " <> T.show (length pkgs')
-        withFetchCache (indexFetchCache opts) manager . runTsvDatabase database $
-          runPipeline
-            defaultPipelineConfig
-              { pipelineWorkerCount = indexWorker opts,
-                pipelineFilterPrefix = indexFilterPrefix opts,
-                pipelineIndexedCount = Just $ readTsvEntryCount database
-              }
-            pkgs
-        readTsvEntryCount database
+      $ do
+        databaseDir <- resolveDatabaseDir (indexDatabase opts)
+        withAtomicFile (databasePath databaseDir) $ \handle ->
+          withTsvDatabase writeQueueCapacity handle $ \database -> do
+            liftIO $ T.putStrLn "querying root packages"
+            logInfo $ "root packages scopes: " <> T.intercalate ", " (map (maybe "(default)" id) scopes)
+            pkgs@(Packages pkgs') <- queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
+            logInfo $ "root packages count: " <> T.show (length pkgs')
+            withFetchCache (indexFetchCache opts) manager . runTsvDatabase database $
+              runPipeline
+                defaultPipelineConfig
+                  { pipelineWorkerCount = indexWorker opts,
+                    pipelineFilterPrefix = indexFilterPrefix opts,
+                    pipelineIndexedCount = Just $ readTsvEntryCount database
+                  }
+                pkgs
+            readTsvEntryCount database
 
   T.putStrLn $ "summary: " <> T.show size <> " paths indexed"
   hFlush stdout

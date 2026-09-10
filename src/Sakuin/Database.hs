@@ -11,9 +11,9 @@ import Effectful
 import Effectful.Concurrent.Async (wait, withAsync)
 import Effectful.Concurrent.STM
 import Effectful.Dispatch.Dynamic (interpret)
-import Effectful.Exception (bracket, throwIO, try)
+import Effectful.Exception (throwIO, try)
 import Sakuin.Types
-import System.IO (Handle, IOMode (WriteMode), hClose, openBinaryFile)
+import System.IO (Handle)
 
 data TsvDatabase = TsvDatabase
   { tsvWriteQueue :: TBQueue (Maybe IndexedStorePath),
@@ -22,25 +22,22 @@ data TsvDatabase = TsvDatabase
   }
 
 withTsvDatabase ::
-  forall es a. (Concurrent :> es, IOE :> es) => Int -> FilePath -> (TsvDatabase -> Eff es a) -> Eff es a
-withTsvDatabase queueCapacity databasePath action =
-  bracket
-    (liftIO $ openBinaryFile databasePath WriteMode)
-    (liftIO . hClose)
-    $ \output -> do
-      queue <- newTBQueueIO (fromIntegral $ max 1 queueCapacity)
-      done <- newEmptyTMVarIO
-      count <- newTVarIO 0
-      let database = TsvDatabase queue done count
-          writerAction = do
-            outcome <- try @SomeException $ writerLoop output queue count
-            atomically $ putTMVar done outcome
-            either throwIO pure outcome
-      withAsync writerAction $ \writer -> do
-        result <- action database
-        enqueue database Nothing
-        wait writer
-        pure result
+  forall es a.
+  (Concurrent :> es, IOE :> es) => Int -> Handle -> (TsvDatabase -> Eff es a) -> Eff es a
+withTsvDatabase queueCapacity output action = do
+  queue <- newTBQueueIO (fromIntegral $ max 1 queueCapacity)
+  done <- newEmptyTMVarIO
+  count <- newTVarIO 0
+  let database = TsvDatabase queue done count
+      writerAction = do
+        outcome <- try @SomeException $ writerLoop output queue count
+        atomically $ putTMVar done outcome
+        either throwIO pure outcome
+  withAsync writerAction $ \writer -> do
+    result <- action database
+    enqueue database Nothing
+    wait writer
+    pure result
 
 runTsvDatabase ::
   forall es a. (Concurrent :> es) => TsvDatabase -> Eff (Database : es) a -> Eff es a

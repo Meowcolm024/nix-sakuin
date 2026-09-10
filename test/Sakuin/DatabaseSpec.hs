@@ -13,10 +13,11 @@ import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
 import Sakuin.MemoryDatabase
+import Sakuin.Storage (withAtomicFile)
 import Sakuin.Types
+import System.IO (hClose)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import System.IO (hClose)
 
 tests :: TestTree
 tests =
@@ -56,8 +57,8 @@ tests =
       testCase "splits store paths evenly across bounded workers" $
         splitEvenly 3 ([1 .. 8] :: [Int]) @?= [[1, 2, 3], [4, 5, 6], [7, 8]],
       testCase "streams queued database entries through zstd" $
-        withSystemTempFile "nix-sakuin-test.tsv.zst" $ \path handle -> do
-          hClose handle
+        withSystemTempFile "nix-sakuin-test.tsv.zst" $ \path initialHandle -> do
+          hClose initialHandle
           let storePath = StorePath "/nix/store" "hash" "example"
               entryOrigin = Origin "example" "out" True "aarch64-darwin"
               emptyIndexed =
@@ -69,10 +70,11 @@ tests =
                   (WithOrigin entryOrigin storePath)
                   (FileNode $ Directory $ Map.singleton "tool" (FileNode $ Regular 7 True))
           runEff . runConcurrent $
-            withTsvDatabase 1 (toFilePath path) $ \database ->
-              runTsvDatabase database $ do
-                addToDatabase emptyIndexed
-                addToDatabase indexed
+            withAtomicFile path $ \handle ->
+              withTsvDatabase 1 handle $ \database ->
+                runTsvDatabase database $ do
+                  addToDatabase emptyIndexed
+                  addToDatabase indexed
           contents <- Zstd.decompress <$> LBS8.readFile (toFilePath path)
           contents @?= "example.out\t7 x\t/nix/store/hash-example/tool\n"
     ]
