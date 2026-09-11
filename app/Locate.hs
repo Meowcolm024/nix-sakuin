@@ -6,6 +6,7 @@ import Effectful.Error.Static (runErrorNoCallStackWith)
 import Path (toFilePath)
 import Sakuin
 import Sakuin.Storage
+import System.IO (hFlush, stdout)
 
 runLocate :: LocateOptions -> IO ()
 runLocate opts = do
@@ -22,3 +23,4 @@ runLocate opts = do
             filterWholeName = locateWholeName opts,
             filterAtRoot = locateAtRoot opts
           }
+  hFlush stdout

@@ -1,5 +1,6 @@
 module Sakuin.Search where
 
+import Control.Monad (foldM_)
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Set qualified as Set
@@ -80,9 +81,13 @@ runTsvSearch ::
 runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters ->
     searchTsvDatabase databasePath pattern isRegex filters $
-      if isMinimal
-        then \bs -> mapM_ (liftIO . LBS8.putStrLn) (Set.fromList $ LBS8.takeWhile (/= '\t') <$> bs)
-        else mapM_ (liftIO . LBS8.putStrLn)
+      if isMinimal then foldM_ printUnique Set.empty else mapM_ (liftIO . LBS8.putStrLn)
+  where
+    printUnique seen line =
+      let out = LBS8.takeWhile (/= '\t') line
+       in if Set.member out seen
+            then pure seen
+            else liftIO (LBS8.putStrLn out) *> pure (Set.insert out seen)
 
 searchTsvDatabase ::
   forall es.
