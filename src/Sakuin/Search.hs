@@ -1,6 +1,5 @@
 module Sakuin.Search where
 
-import Control.Monad (foldM_)
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Set qualified as Set
@@ -80,20 +79,13 @@ runTsvSearch ::
   FilePath -> Bool -> Eff (Search : es) a -> Eff es a
 runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters ->
-    searchTsvDatabase databasePath pattern isRegex filters $
-      if isMinimal then foldM_ printUnique Set.empty else mapM_ (liftIO . LBS8.putStrLn)
-  where
-    printUnique seen line =
-      let out = LBS8.takeWhile (/= '\t') line
-       in if Set.member out seen
-            then pure seen
-            else liftIO (LBS8.putStrLn out) *> pure (Set.insert out seen)
+    searchTsvDatabase databasePath pattern isRegex filters isMinimal
 
 searchTsvDatabase ::
   forall es.
   (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Text -> Bool -> TsvSearchFilter -> ([LBS8.ByteString] -> Eff es ()) -> Eff es ()
-searchTsvDatabase databasePath pattern isRegex filters sink =
+  FilePath -> Text -> Bool -> TsvSearchFilter -> Bool -> Eff es ()
+searchTsvDatabase databasePath pattern isRegex filters isMinimal =
   either (throwError . InvalidSearchRegex . T.pack) runSearch (pathMatcher pattern isRegex filters)
   where
     runSearch matchesPath = do
@@ -101,7 +93,11 @@ searchTsvDatabase databasePath pattern isRegex filters sink =
         withProcessWait zstdConfig $ \zstdProcess ->
           withProcessWait (setStdout createPipe . rgConfig $ getStdout zstdProcess) $ \rgProcess -> do
             output <- liftIO $ LBS8.hGetContents $ getStdout rgProcess
-            sink $ filter (matchesTsvSearchFilter filters matchesPath) $ LBS8.lines output
+            let candidates = LBS8.lines output
+                results
+                  | isMinimal = minimalSearchResults filters matchesPath candidates
+                  | otherwise = filter (matchesTsvSearchFilter filters matchesPath) candidates
+            mapM_ (liftIO . LBS8.putStrLn) results
             rgExit <- waitExitCode rgProcess
             case rgExit of
               ExitSuccess -> pure ()
@@ -114,6 +110,18 @@ searchTsvDatabase databasePath pattern isRegex filters sink =
     rgConfig input =
       setStdin (useHandleOpen input) $
         proc "rg" (rgArguments pattern isRegex)
+
+minimalSearchResults :: TsvSearchFilter -> PathMatcher -> [LBS8.ByteString] -> [LBS8.ByteString]
+minimalSearchResults filters matchesPath = go Set.empty
+  where
+    go _ [] = []
+    go seen (line : rest)
+      | Set.member outputName seen = go seen rest
+      | matchesTsvSearchFilter filters matchesPath line =
+          outputName : go (Set.insert outputName seen) rest
+      | otherwise = go seen rest
+      where
+        outputName = LBS8.takeWhile (/= '\t') line
 
 matchesTsvSearchFilter :: TsvSearchFilter -> PathMatcher -> LBS8.ByteString -> Bool
 matchesTsvSearchFilter filters matchesPath line =

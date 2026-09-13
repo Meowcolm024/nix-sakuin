@@ -69,7 +69,15 @@ tests =
         matchesTsvSearchFilter defaultFilters matcher "hello.out\t42 x\t/not-a-store-path/bin/hello" @?= False
         case pathMatcher "[" True defaultFilters of
           Left _ -> pure ()
-          Right _ -> assertFailure "invalid regex unexpectedly compiled"
+          Right _ -> assertFailure "invalid regex unexpectedly compiled",
+      testCase "minimal search stops matching after an output name succeeds" $ do
+        let first = "example.out\t1 r\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/share/example"
+            match = "example.out\t2 x\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/bin/example"
+            duplicate = "example.out\t3 x\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/bin/example-extra"
+            other = "other.out\t4 x\t/nix/store/11111111111111111111111111111111-other/bin/example"
+            matchesBin fullPath = listingPathMatches fullPath ("/bin/" `T.isPrefixOf`)
+        minimalSearchResults defaultFilters matchesBin [first, match, duplicate, other]
+          @?= ["example.out", "other.out"]
     ]
 
 defaultFilters :: TsvSearchFilter
