@@ -1,9 +1,14 @@
 module Sakuin.SearchSpec (tests) where
 
+import Data.ByteString.Char8 qualified as BS8
 import Data.Either (isLeft)
 import Data.Text qualified as T
+import Effectful (runEff)
+import Path.IO (withSystemTempFile)
+import Sakuin.Database.TSV (drainSearchResults, matchesTsvSearchFilter)
 import Sakuin.Search
 import Sakuin.Types
+import System.IO (SeekMode (AbsoluteSeek), hSeek)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -70,19 +75,17 @@ tests =
         case pathMatcher "[" True defaultFilters of
           Left _ -> pure ()
           Right _ -> assertFailure "invalid regex unexpectedly compiled",
-      testCase "minimal search stops matching after an output name succeeds" $ do
-        let first = "example.out\t1 r\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/share/example"
-            match = "example.out\t2 x\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/bin/example"
-            duplicate = "example.out\t3 x\t/nix/store/0123456789abcdfghijklmnpqrsvwxyz-example/bin/example-extra"
-            other = "other.out\t4 x\t/nix/store/11111111111111111111111111111111-other/bin/example"
-            matchesBin fullPath = listingPathMatches fullPath ("/bin/" `T.isPrefixOf`)
-        minimalSearchResults defaultFilters matchesBin [first, match, duplicate, other]
-          @?= ["example.out", "other.out"]
+      testCase "drains search results incrementally while threading state" $
+        withSystemTempFile "nix-sakuin-search-results" $ \_ handle -> do
+          BS8.hPutStr handle "first\nsecond\nthird\n"
+          hSeek handle AbsoluteSeek 0
+          linesSeen <- runEff $ drainSearchResults handle [] $ \line seen -> pure (seen <> [line])
+          linesSeen @?= ["first", "second", "third"]
     ]
 
-defaultFilters :: TsvSearchFilter
+defaultFilters :: SearchFilter
 defaultFilters =
-  TsvSearchFilter
+  SearchFilter
     { filterPackage = Nothing,
       filterHash = Nothing,
       filterTypes = [],

@@ -12,6 +12,7 @@ import Effectful.Concurrent
 import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
+import Sakuin.Database.TSV
 import Sakuin.MemoryDatabase
 import Sakuin.Storage (withAtomicFile)
 import Sakuin.Types

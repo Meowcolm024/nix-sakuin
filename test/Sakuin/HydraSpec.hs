@@ -13,6 +13,7 @@ import Effectful
 import Effectful.Concurrent (runConcurrent)
 import Effectful.Dispatch.Dynamic
 import Network.HTTP.Client (defaultManagerSettings, newManager)
+import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.Header (hContentEncoding)
 import Sakuin
 import Sakuin.FetchCache
@@ -29,6 +30,9 @@ runMockCache :: forall es a. MockCacheData -> Eff (Fetch : es) a -> Eff es a
 runMockCache cache = interpret $ \_ -> \case
   FetchNarInfo storePath -> pure $ Map.lookup (spHash storePath) (mockNarInfos cache)
   FetchListing storePath -> pure $ Map.lookup (spHash storePath) (mockListings cache)
+
+cacheUri :: Req.Url Req.Https
+cacheUri = Req.https "cache.nixos.org"
 
 tests :: TestTree
 tests =
@@ -68,7 +72,7 @@ tests =
               runEff
                 . runConcurrent
                 . runLogSilent
-                $ runHydraFetchCache initialCache manager ((,) <$> fetchNarInfo cachedPath <*> fetchListing cachedPath)
+                $ runHydraFetchCache initialCache manager cacheUri ((,) <$> fetchNarInfo cachedPath <*> fetchListing cachedPath)
             cachedResult @?= (Just cachedNarinfo, Just expectedListing)
             cachedNarInfo (Map.findWithDefault emptyFetchCacheEntry (spHash cachedPath) snapshot)
               @?= Found narinfoBytes

@@ -14,6 +14,7 @@ import Effectful.Concurrent (Concurrent, runConcurrent)
 import Effectful.Error.Static (runErrorNoCallStackWith)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
+import Network.HTTP.Req qualified as Req
 import Path
 import Path.IO
 import Sakuin
@@ -21,11 +22,14 @@ import Sakuin.FetchCache
 import Sakuin.Storage
 import System.IO (hFlush, stdout)
 
+cacheUri :: Req.Url Req.Https
+cacheUri = Req.https "cache.nixos.org"
+
 withFetchCache ::
   forall es a.
   (Concurrent :> es, IOE :> es, Log :> es) => Bool -> Manager -> Eff (Fetch : es) a -> Eff es a
-withFetchCache enabled mgr action
-  | not enabled = runHydra mgr action
+withFetchCache enabled manager action
+  | not enabled = runHydra manager cacheUri action
   | otherwise = do
       logInfo "loading fetch cache"
       cachePath <- fetchCachePath
@@ -37,7 +41,7 @@ withFetchCache enabled mgr action
               Left err -> logWarn err *> pure Map.empty
               Right c -> pure c
           else pure Map.empty
-      (result, finalCache) <- runHydraFetchCache initial mgr action
+      (result, finalCache) <- runHydraFetchCache initial manager cacheUri action
       logInfo "writing fetch cache"
       withAtomicFile cachePath $ \handle ->
         liftIO $ LBS.hPut handle (encodeFetchCache finalCache)

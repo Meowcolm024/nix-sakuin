@@ -16,7 +16,7 @@ runLocate opts = do
       searchPaths
         (locatePattern opts)
         (locateRegex opts)
-        TsvSearchFilter
+        SearchFilter
           { filterPackage = locatePackage opts,
             filterHash = locateHash opts,
             filterTypes = locateTypes opts,

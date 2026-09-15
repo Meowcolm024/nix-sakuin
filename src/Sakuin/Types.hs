@@ -236,25 +236,25 @@ type instance DispatchOf Database = Dynamic
 addToDatabase :: forall es. (Database :> es) => IndexedStorePath -> Eff es ()
 addToDatabase = send . AddToDatabase
 
+data Search :: Effect where
+  SearchPaths :: forall m. Text -> Bool -> SearchFilter -> Search m ()
+
+type instance DispatchOf Search = Dynamic
+
+searchPaths :: forall es. (Search :> es) => Text -> Bool -> SearchFilter -> Eff es ()
+searchPaths pattern isRegex filters = send $ SearchPaths pattern isRegex filters
+
 type PathMatcher = Text -> Bool
 
 type SearchResult = (WithOrigin StorePath, FileLine)
 
-data TsvSearchFilter = TsvSearchFilter
+data SearchFilter = SearchFilter
   { filterPackage :: Maybe Text,
     filterHash :: Maybe Text,
     filterTypes :: [Char],
     filterWholeName :: Bool,
     filterAtRoot :: Bool
   }
-
-data Search :: Effect where
-  SearchPaths :: forall m. Text -> Bool -> TsvSearchFilter -> Search m ()
-
-type instance DispatchOf Search = Dynamic
-
-searchPaths :: forall es. (Search :> es) => Text -> Bool -> TsvSearchFilter -> Eff es ()
-searchPaths pattern isRegex filters = send $ SearchPaths pattern isRegex filters
 
 class IsError e where
   formatError :: e -> Text

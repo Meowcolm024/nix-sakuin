@@ -1,7 +1,6 @@
 module Cli where
 
 import Data.Functor ((<&>))
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Version (showVersion)
 import Options.Applicative
@@ -86,7 +85,7 @@ indexParser = do
           <> help "Specify system platform for which to build the index"
       )
   indexWorker <-
-    optionMaybe
+    option
       (auto @Int)
       ( long "workers"
           <> short 'w'
@@ -95,9 +94,8 @@ indexParser = do
           <> showDefault
           <> help "Number of parallel workers"
       )
-      <&> fromMaybe 100
   indexNixpkgsPath <-
-    optionMaybe
+    option
       str
       ( long "nixpkgs"
           <> short 'f'
@@ -106,7 +104,6 @@ indexParser = do
           <> showDefault
           <> help "Path to nixpkgs repository"
       )
-      <&> (fromMaybe "<nixpkgs>")
   indexExtraScopes <-
     ( many $
         strOption $
@@ -122,7 +119,7 @@ indexParser = do
           <> help "Cache fetched narinfo and listings in $TMPDIR (or /tmp)"
       )
   indexVerbose <-
-    optionMaybe
+    option
       (auto @Int)
       ( long "verbose"
           <> metavar "LEVEL"
@@ -130,7 +127,6 @@ indexParser = do
           <> showDefault
           <> help "Verbosity level (0-2)"
       )
-      <&> fromMaybe 1
   pure $
     IndexOptions
       { indexDatabase,

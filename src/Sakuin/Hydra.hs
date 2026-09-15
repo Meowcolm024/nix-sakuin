@@ -23,25 +23,23 @@ import Sakuin.FetchCache
 import Sakuin.Log
 import Sakuin.Types
 
-cacheUri :: Req.Url Req.Https
-cacheUri = Req.https "cache.nixos.org"
-
 runHydra ::
   forall es a.
   (Concurrent :> es, IOE :> es, Log :> es) =>
-  Manager -> Eff (Fetch : es) a -> Eff es a
-runHydra manager = interpret $ \_ -> \case
-  FetchNarInfo storePath -> fetchNarInfoFromHydra manager storePath
-  FetchListing storePath -> fetchListingFromHydra manager storePath
+  Manager -> Req.Url Req.Https -> Eff (Fetch : es) a -> Eff es a
+runHydra manager cacheUri = interpret $ \_ -> \case
+  FetchNarInfo storePath -> fetchNarInfoFromHydra manager cacheUri storePath
+  FetchListing storePath -> fetchListingFromHydra manager cacheUri storePath
 
 runHydraFetchCache ::
   forall es a.
   (Concurrent :> es, IOE :> es, Log :> es) =>
   Map StoreHash FetchCacheEntry ->
   Manager ->
+  Req.Url Req.Https ->
   Eff (Fetch : es) a ->
   Eff es (a, Map StoreHash FetchCacheEntry)
-runHydraFetchCache initial manager action = do
+runHydraFetchCache initial manager cacheUri action = do
   cache <- newFetchCacheState initial
   result <-
     interpret
@@ -51,9 +49,9 @@ runHydraFetchCache initial manager action = do
             case cached of
               Found bytes -> case parseNarInfo bytes of
                 Just narinfo -> pure (Just narinfo)
-                Nothing -> fetchAndCacheNarInfo cache manager storePath
+                Nothing -> fetchAndCacheNarInfo cache manager cacheUri storePath
               Missing -> pure Nothing
-              NotFetched -> fetchAndCacheNarInfo cache manager storePath
+              NotFetched -> fetchAndCacheNarInfo cache manager cacheUri storePath
           FetchListing storePath -> do
             cached <- lookupCachedListing cache (spHash storePath)
             case cached of
@@ -62,9 +60,9 @@ runHydraFetchCache initial manager action = do
                   Right listing -> pure $ Just listing
                   Left err -> do
                     logWarn $ "discarding invalid cached listing for hash " <> spHash storePath <> ": " <> T.pack err
-                    fetchAndCacheListing cache manager storePath
+                    fetchAndCacheListing cache manager cacheUri storePath
               Missing -> pure Nothing
-              NotFetched -> fetchAndCacheListing cache manager storePath
+              NotFetched -> fetchAndCacheListing cache manager cacheUri storePath
       )
       action
   finalCache <- readFetchCacheState cache
@@ -72,16 +70,18 @@ runHydraFetchCache initial manager action = do
 
 fetchNarInfoFromHydra ::
   forall es.
-  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe NarInfo)
-fetchNarInfoFromHydra manager storePath = do
-  raw <- fetch manager (spHash storePath <> ".narinfo")
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  Manager -> Req.Url Req.Https -> StorePath -> Eff es (Maybe NarInfo)
+fetchNarInfoFromHydra manager cacheUri storePath = do
+  raw <- fetch manager cacheUri (spHash storePath <> ".narinfo")
   pure $ LBS.toStrict <$> raw >>= parseNarInfo
 
 fetchAndCacheNarInfo ::
   forall es.
-  (Concurrent :> es, IOE :> es, Log :> es) => FetchCacheState -> Manager -> StorePath -> Eff es (Maybe NarInfo)
-fetchAndCacheNarInfo cache manager storePath = do
-  raw <- fetch manager (spHash storePath <> ".narinfo")
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  FetchCacheState -> Manager -> Req.Url Req.Https -> StorePath -> Eff es (Maybe NarInfo)
+fetchAndCacheNarInfo cache manager cacheUri storePath = do
+  raw <- fetch manager cacheUri (spHash storePath <> ".narinfo")
   case raw of
     Nothing -> pure Nothing
     Just bytes -> case parseNarInfo (LBS.toStrict bytes) of
@@ -92,23 +92,26 @@ fetchAndCacheNarInfo cache manager storePath = do
 
 fetchListingFromHydra ::
   forall es.
-  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe FileNode)
-fetchListingFromHydra manager storePath = do
-  body <- fetchListingBytes manager storePath
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  Manager -> Req.Url Req.Https -> StorePath -> Eff es (Maybe FileNode)
+fetchListingFromHydra manager cacheUri storePath = do
+  body <- fetchListingBytes manager cacheUri storePath
   decodeFetchedListing storePath body
 
 fetchListingBytes ::
   forall es.
-  (Concurrent :> es, IOE :> es, Log :> es) => Manager -> StorePath -> Eff es (Maybe LBS.ByteString)
-fetchListingBytes manager storePath = do
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  Manager -> Req.Url Req.Https -> StorePath -> Eff es (Maybe LBS.ByteString)
+fetchListingBytes manager cacheUri storePath = do
   let base = spHash storePath
-  fetch manager (base <> ".ls") >>= \case
+  fetch manager cacheUri (base <> ".ls") >>= \case
     Just bytes -> pure (Just bytes)
-    Nothing -> fetch manager (base <> ".ls.xz")
+    Nothing -> fetch manager cacheUri (base <> ".ls.xz")
 
 decodeFetchedListing ::
   forall es.
-  (Concurrent :> es, Log :> es) => StorePath -> Maybe LBS.ByteString -> Eff es (Maybe FileNode)
+  (Concurrent :> es, Log :> es) =>
+  StorePath -> Maybe LBS.ByteString -> Eff es (Maybe FileNode)
 decodeFetchedListing storePath body = do
   result <- case body of
     Nothing -> pure $ Right Nothing
@@ -121,9 +124,10 @@ decodeFetchedListing storePath body = do
 
 fetchAndCacheListing ::
   forall es.
-  (Concurrent :> es, IOE :> es, Log :> es) => FetchCacheState -> Manager -> StorePath -> Eff es (Maybe FileNode)
-fetchAndCacheListing cache manager storePath = do
-  body <- fetchListingBytes manager storePath
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  FetchCacheState -> Manager -> Req.Url Req.Https -> StorePath -> Eff es (Maybe FileNode)
+fetchAndCacheListing cache manager cacheUri storePath = do
+  body <- fetchListingBytes manager cacheUri storePath
   listing <- decodeFetchedListing storePath body
   case (body, listing) of
     (Just bytes, Just files) -> do
@@ -148,30 +152,11 @@ decodeListing bytes =
 parseListing :: forall es. LBS.ByteString -> Eff es FileNode
 parseListing bytes = root <$> throwDecode bytes
 
--- simple fetch without retry
-fetchNoRetry ::
-  forall es. (Concurrent :> es, IOE :> es) => Text -> Manager -> Eff es (Status, ResponseHeaders, LBS.ByteString)
-fetchNoRetry path mgr = liftIO . Req.runReq config $ do
-  response <- Req.req Req.GET (cacheUri Req./: path) Req.NoReqBody Req.lbsResponse mempty
-  let vanillaResponse = Req.toVanillaResponse response :: Response LBS.ByteString
-  pure (responseStatus vanillaResponse, responseHeaders vanillaResponse, Req.responseBody response)
-  where
-    config =
-      Req.defaultHttpConfig
-        { Req.httpConfigAltManager = Just mgr,
-          Req.httpConfigCheckResponse = \_ _ _ -> Nothing,
-          Req.httpConfigRetryJudge = \_ _ -> False,
-          Req.httpConfigRetryJudgeException = \_ _ -> False
-        }
-
--- workaround for brotli compression from cache.nixos.org
-decodeResponseBody :: ResponseHeaders -> LBS.ByteString -> LBS.ByteString
-decodeResponseBody headers body
-  | lookup hContentEncoding headers == Just "br" = Brotli.decompress body
-  | otherwise = body
-
-fetch :: forall es. (Concurrent :> es, IOE :> es, Log :> es) => Manager -> Text -> Eff es (Maybe LBS.ByteString)
-fetch mgr path = do
+fetch ::
+  forall es.
+  (Concurrent :> es, IOE :> es, Log :> es) =>
+  Manager -> Req.Url Req.Https -> Text -> Eff es (Maybe LBS.ByteString)
+fetch manager cacheUri path = do
   result <- Retry.retrying policy (\_ -> pure . isLeft) (const attempt)
   case result of
     Left failure -> do
@@ -182,7 +167,7 @@ fetch mgr path = do
     uri = Req.renderUrl (cacheUri Req./: path)
     policy = Retry.capDelay 5000000 (Retry.fullJitterBackoff 50000) <> Retry.limitRetries 4
     attempt = do
-      result <- try @Req.HttpException (fetchNoRetry path mgr)
+      result <- try @Req.HttpException (fetchNoRetry manager cacheUri path)
       case result of
         Left err -> pure . Left . T.pack $ displayException err
         Right (status, headers, body)
@@ -194,3 +179,27 @@ fetch mgr path = do
           | otherwise -> do
               logWarn $ "failed fetching " <> uri <> ": HTTP " <> T.pack (show $ statusCode status)
               pure $ Right Nothing
+
+-- simple fetch without retry
+fetchNoRetry ::
+  forall es.
+  (Concurrent :> es, IOE :> es) =>
+  Manager -> Req.Url Req.Https -> Text -> Eff es (Status, ResponseHeaders, LBS.ByteString)
+fetchNoRetry manager cacheUri path = liftIO . Req.runReq config $ do
+  response <- Req.req Req.GET (cacheUri Req./: path) Req.NoReqBody Req.lbsResponse mempty
+  let vanillaResponse = Req.toVanillaResponse response :: Response LBS.ByteString
+  pure (responseStatus vanillaResponse, responseHeaders vanillaResponse, Req.responseBody response)
+  where
+    config =
+      Req.defaultHttpConfig
+        { Req.httpConfigAltManager = Just manager,
+          Req.httpConfigCheckResponse = \_ _ _ -> Nothing,
+          Req.httpConfigRetryJudge = \_ _ -> False,
+          Req.httpConfigRetryJudgeException = \_ _ -> False
+        }
+
+-- workaround for brotli compression from cache.nixos.org
+decodeResponseBody :: ResponseHeaders -> LBS.ByteString -> LBS.ByteString
+decodeResponseBody headers body
+  | lookup hContentEncoding headers == Just "br" = Brotli.decompress body
+  | otherwise = body

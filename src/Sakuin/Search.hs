@@ -1,19 +1,18 @@
 module Sakuin.Search where
 
-import Data.ByteString.Lazy qualified as LBS
-import Data.ByteString.Lazy.Char8 qualified as LBS8
-import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.Encoding (decodeUtf8)
-import Effectful
-import Effectful.Dispatch.Dynamic (interpret)
-import Effectful.Error.Static
-import Effectful.Exception
 import Sakuin.Types
-import System.Process.Typed
 import Text.Regex.TDFA (defaultCompOpt, defaultExecOpt, matchTest)
 import Text.Regex.TDFA.String (compile)
+
+data SearchError = InvalidSearchRegex Text | SearchProcessError Text
+  deriving stock (Show, Eq)
+
+instance IsError SearchError where
+  formatError = \case
+    InvalidSearchRegex message -> "invalid search regex: " <> message
+    SearchProcessError message -> message
 
 keywordMatcher :: Text -> PathMatcher
 keywordMatcher query candidate =
@@ -63,80 +62,7 @@ ensureLeadingSlash value
   | "/" `T.isPrefixOf` value = value
   | otherwise = "/" <> value
 
-data SearchError
-  = InvalidSearchRegex Text
-  | SearchProcessError Text
-  deriving stock (Show, Eq)
-
-instance IsError SearchError where
-  formatError = \case
-    InvalidSearchRegex message -> "invalid search regex: " <> message
-    SearchProcessError message -> message
-
-runTsvSearch ::
-  forall es a.
-  (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runTsvSearch databasePath isMinimal = interpret $ \_ -> \case
-  SearchPaths pattern isRegex filters ->
-    searchTsvDatabase databasePath pattern isRegex filters isMinimal
-
-searchTsvDatabase ::
-  forall es.
-  (IOE :> es, Error SearchError :> es) =>
-  FilePath -> Text -> Bool -> TsvSearchFilter -> Bool -> Eff es ()
-searchTsvDatabase databasePath pattern isRegex filters isMinimal =
-  either (throwError . InvalidSearchRegex . T.pack) runSearch (pathMatcher pattern isRegex filters)
-  where
-    runSearch matchesPath = do
-      result <- try @SomeException $
-        withProcessWait zstdConfig $ \zstdProcess ->
-          withProcessWait (setStdout createPipe . rgConfig $ getStdout zstdProcess) $ \rgProcess -> do
-            output <- liftIO $ LBS8.hGetContents $ getStdout rgProcess
-            let candidates = LBS8.lines output
-                results
-                  | isMinimal = minimalSearchResults filters matchesPath candidates
-                  | otherwise = filter (matchesTsvSearchFilter filters matchesPath) candidates
-            mapM_ (liftIO . LBS8.putStrLn) results
-            rgExit <- waitExitCode rgProcess
-            case rgExit of
-              ExitSuccess -> pure ()
-              ExitFailure 1 -> pure ()
-              ExitFailure code -> throwIO . userError $ "rg failed with exit code " <> show code
-            checkExitCode zstdProcess
-      either (throwError . SearchProcessError . T.pack . displayException) pure result
-    zstdConfig =
-      setStdout createPipe $ proc "zstd" ["--decompress", "--stdout", databasePath]
-    rgConfig input =
-      setStdin (useHandleOpen input) $
-        proc "rg" (rgArguments pattern isRegex)
-
-minimalSearchResults :: TsvSearchFilter -> PathMatcher -> [LBS8.ByteString] -> [LBS8.ByteString]
-minimalSearchResults filters matchesPath = go Set.empty
-  where
-    go _ [] = []
-    go seen (line : rest)
-      | Set.member outputName seen = go seen rest
-      | matchesTsvSearchFilter filters matchesPath line =
-          outputName : go (Set.insert outputName seen) rest
-      | otherwise = go seen rest
-      where
-        outputName = LBS8.takeWhile (/= '\t') line
-
-matchesTsvSearchFilter :: TsvSearchFilter -> PathMatcher -> LBS8.ByteString -> Bool
-matchesTsvSearchFilter filters matchesPath line =
-  case LBS8.split '\t' line of
-    [package, metadata, fullPath] ->
-      maybe True (`T.isPrefixOf` decode package) (filterPackage filters)
-        && maybe True (hasStoreHash $ decode fullPath) (filterHash filters)
-        && (null (filterTypes filters) || maybe False (`elem` filterTypes filters) (fileType metadata))
-        && matchesPath (decode fullPath)
-    _ -> False
-  where
-    decode = decodeUtf8 . LBS.toStrict
-    fileType = fmap snd . LBS8.unsnoc
-
-pathMatcher :: Text -> Bool -> TsvSearchFilter -> Either String PathMatcher
+pathMatcher :: Text -> Bool -> SearchFilter -> Either String PathMatcher
 pathMatcher pattern isRegex filters
   | isRegex = (\matches fullPath -> listingPathMatches fullPath matches) <$> regexMatcher anchoredPattern
   | otherwise = Right $ fixedMatcher (T.toCaseFold pattern)
@@ -158,9 +84,3 @@ pathMatcher pattern isRegex filters
       | otherwise = query `T.isInfixOf` path
       where
         path = T.toCaseFold candidate
-
-rgArguments :: Text -> Bool -> [String]
-rgArguments pattern isRegex =
-  ["--text", "--no-line-number", "--no-heading", "--color", "never"]
-    <> (if isRegex then [] else ["--fixed-strings", "--ignore-case"])
-    <> ["--", T.unpack pattern]

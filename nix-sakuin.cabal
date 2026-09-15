@@ -70,6 +70,7 @@ library
   exposed-modules:
     Sakuin
     Sakuin.Database
+    Sakuin.Database.TSV
     Sakuin.FetchCache
     Sakuin.Hydra
     Sakuin.Log
@@ -98,7 +99,7 @@ executable nix-sakuin
     Paths_nix_sakuin
 
   ghc-options:
-    -O2
+    -O
     -threaded
     -rtsopts
     -with-rtsopts=-N
