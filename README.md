@@ -37,20 +37,19 @@ $ nix-sakuin index --db-format tsv
 $ nix-sakuin locate --db-format tsv -t x --minimal /bin/ocamlopt
 ```
 
-Use `--parallel` on a FrCode query to decode and match chunks across GHC
-capabilities while preserving database order.
+Select a FrCode query implementation with `--backend`. TSV always uses its
+own search and prints a warning for non-default backend selections.
+
+| Backend | Query implementation |
+| --- | --- |
+| `default` | Parse strict FrCode chunks into a reusable path buffer. This is also used when `--backend` is omitted. |
+| `parallel` | Decode and match FrCode chunks across GHC capabilities while preserving database order. |
+| `pure` | Use the immutable FrCode decoder and `Text` matching. |
+| `cheat` | Use the single-threaded C backend with POSIX extended regular expressions for `--regex`. |
 
 ```sh
-$ nix-sakuin locate --parallel -t x --minimal /bin/ocamlopt
+$ nix-sakuin locate --backend parallel -t x --minimal /bin/ocamlopt
 ```
-
-Use `--pure` to query FrCode with the immutable Haskell decoder and
-`Text` matching. The default serial mode parses strict chunks into a reusable
-path buffer. Criterion measures both against the same FrCode database.
-
-Use `--cheat` to try the experimental C backend with an existing FrCode
-database. It runs on one thread and uses the platform's POSIX extended regular
-expression engine for `--regex`.
 
 ## Benchmark
 

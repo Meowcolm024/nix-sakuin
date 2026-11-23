@@ -86,9 +86,14 @@ library
 
   other-modules:
     Sakuin.Database.Common
-    Sakuin.Database.Native
+    Sakuin.Database.FrCode.Codec
+    Sakuin.Database.FrCode.Native
+    Sakuin.Database.FrCode.Parallel
+    Sakuin.Database.FrCode.Pure
+    Sakuin.Database.FrCode.Query
+    Sakuin.Database.FrCode.Serial
 
-  c-sources: src/Sakuin/Database/Native.c
+  c-sources: src/Sakuin/Database/FrCode/Native.c
   cc-options:
     -O3
     -Wall

@@ -2,25 +2,24 @@ module Locate where
 
 import Cli
 import Effectful
-import Effectful.Error.Static (runErrorNoCallStackWith, throwError)
+import Effectful.Error.Static (runErrorNoCallStackWith)
 import Path (toFilePath)
 import Sakuin
 import Sakuin.Storage
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
 runLocate :: LocateOptions -> IO ()
 runLocate opts = do
   runEff . runErrorNoCallStackWith @SearchError (liftIO . exitErrorIO) $ do
     let format = locateDatabaseFormat opts
-    runSearch <- case (format, locateParallel opts, locatePure opts, locateCheat opts) of
-      (FrCode, False, False, True) -> pure runFrCodeNativeSearch
-      (FrCode, False, True, False) -> pure runFrCodePureSearch
-      (FrCode, True, False, False) -> pure runFrCodeParallelSearch
-      (Tsv, _, _, True) -> throwError $ SearchProcessError "--cheat requires --db-format frcode"
-      (Tsv, True, _, False) -> throwError $ SearchProcessError "--parallel requires --db-format frcode"
-      (Tsv, False, True, False) -> throwError $ SearchProcessError "--pure requires --db-format frcode"
-      (_, False, False, False) -> pure $ runDatabaseSearch format
-      (FrCode, _, _, _) -> throwError $ SearchProcessError "--pure, --parallel, and --cheat are mutually exclusive"
+    runSearch <- case (format, locateBackend opts) of
+      (_, DefaultBackend) -> pure $ runDatabaseSearch format
+      (FrCode, ParallelBackend) -> pure runFrCodeParallelSearch
+      (FrCode, PureBackend) -> pure runFrCodePureSearch
+      (FrCode, CheatBackend) -> pure runFrCodeNativeSearch
+      (Tsv, backend) -> do
+        liftIO $ hPutStrLn stderr $ "Warning: ignoring --backend " <> locateBackendName backend <> " for TSV databases"
+        pure $ runDatabaseSearch Tsv
     databaseDir <- resolveDatabaseDir (locateDatabase opts)
     runSearch (toFilePath $ databasePathFor format databaseDir) (locateMinimal opts) $
       searchPaths

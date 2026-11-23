@@ -33,14 +33,15 @@ data QueryBackend = QueryBackend
 queryBackends :: [QueryBackend]
 queryBackends =
   [ serial Tsv,
-    serial FrCode,
-    QueryBackend "frcode-pure" FrCode ["--pure"],
-    QueryBackend "frcode-parallel" FrCode ["--parallel"],
-    QueryBackend "frcode-c" FrCode ["--cheat"],
+    frCodeQuery "frcode" "default",
+    frCodeQuery "frcode-pure" "pure",
+    frCodeQuery "frcode-parallel" "parallel",
+    frCodeQuery "frcode-c" "cheat",
     serial NixIndex
   ]
   where
     serial backend = QueryBackend (backendName backend) backend []
+    frCodeQuery name backend = QueryBackend name FrCode ["--backend", backend]
 
 main :: IO ()
 main = do

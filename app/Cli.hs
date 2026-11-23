@@ -1,6 +1,7 @@
 module Cli where
 
 import Data.Functor ((<&>))
+import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Version (showVersion)
 import Options.Applicative
@@ -22,12 +23,23 @@ data IndexOptions = IndexOptions
   }
   deriving stock (Show)
 
+data LocateBackend
+  = DefaultBackend
+  | ParallelBackend
+  | PureBackend
+  | CheatBackend
+  deriving stock (Bounded, Enum, Show)
+
+locateBackendName :: LocateBackend -> String
+locateBackendName DefaultBackend = "default"
+locateBackendName ParallelBackend = "parallel"
+locateBackendName PureBackend = "pure"
+locateBackendName CheatBackend = "cheat"
+
 data LocateOptions = LocateOptions
   { locateDatabase :: Maybe (Path Abs Dir),
     locateDatabaseFormat :: DatabaseFormat,
-    locateParallel :: Bool,
-    locatePure :: Bool,
-    locateCheat :: Bool,
+    locateBackend :: LocateBackend,
     locateRegex :: Bool,
     locatePackage :: Maybe Text,
     locateHash :: Maybe Text,
@@ -87,6 +99,24 @@ databaseFormatOption =
     readFormat "tsv" = Right Tsv
     readFormat "frcode" = Right FrCode
     readFormat _ = Left "FORMAT must be frcode or tsv"
+
+locateBackendOption :: Parser LocateBackend
+locateBackendOption =
+  option
+    (eitherReader readBackend)
+    ( long "backend"
+        <> metavar "BACKEND"
+        <> value DefaultBackend
+        <> showDefaultWith locateBackendName
+        <> completeWith names
+        <> help ("Query backend (" <> backendNames <> ")")
+    )
+  where
+    choices = [(locateBackendName backend, backend) | backend <- [minBound .. maxBound]]
+    names = map fst choices
+    backendNames = intercalate ", " names
+    readBackend name =
+      maybe (Left $ "BACKEND must be one of " <> backendNames) Right $ lookup name choices
 
 -- Parser for index command
 indexParser :: Parser IndexOptions
@@ -170,9 +200,7 @@ locateParser :: Parser LocateOptions
 locateParser = do
   locateDatabase <- databaseOption
   locateDatabaseFormat <- databaseFormatOption
-  locateParallel <- switch (long "parallel" <> help "Decode FrCode chunks in parallel")
-  locatePure <- switch (long "pure" <> help "Use the immutable Haskell FrCode decoder and Text matcher")
-  locateCheat <- switch (long "cheat" <> help "Search FrCode using the experimental C backend")
+  locateBackend <- locateBackendOption
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
   locatePackage <-
@@ -196,9 +224,7 @@ locateParser = do
     LocateOptions
       { locateDatabase,
         locateDatabaseFormat,
-        locateParallel,
-        locatePure,
-        locateCheat,
+        locateBackend,
         locateRegex,
         locatePackage,
         locateHash,

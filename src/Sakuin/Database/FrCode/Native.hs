@@ -1,4 +1,4 @@
-module Sakuin.Database.Native (runFrCodeNativeSearch) where
+module Sakuin.Database.FrCode.Native (runFrCodeNativeSearch) where
 
 import Data.ByteString qualified as BS
 import Data.Text qualified as T
