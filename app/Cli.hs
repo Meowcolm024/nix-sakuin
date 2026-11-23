@@ -47,7 +47,7 @@ defaultExtraScopes :: [Text]
 defaultExtraScopes =
   [ "haskellPackages",
     "rPackages",
-    "coqPackages",
+    "rocqPackages",
     "texlive.pkgs",
     "ocamlPackages"
   ]
