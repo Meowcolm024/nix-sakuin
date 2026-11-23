@@ -6,6 +6,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Either (isLeft)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -14,8 +15,9 @@ import Effectful.Concurrent
 import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
-import Sakuin.Database.FrCode (foldFrCodeRows)
+import Sakuin.Database.FrCode (foldFrCodeRows, searchFrCodeChunks)
 import Sakuin.Database.TSV (formatIndexedStorePath)
+import Sakuin.Search (pathMatcher)
 import Sakuin.Storage (withAtomicFile)
 import Sakuin.Types
 import System.IO (hClose)
@@ -62,7 +64,28 @@ tests =
         writeDatabase [] >>= decodeRows >>= (@?= [])
         let header = magic <> "pempty.out\0\0/nix/store/example\n"
             invalid = ["tsv", magic <> "bad", magic <> "p\0\128\0", magic <> "p\0\255\n", header, header <> "7 x\0\0/unfinished"]
-        mapM_ (\contents -> try @IOException (decodeRows contents) >>= assertBool "expected a decoding failure" . isLeft) invalid
+        mapM_ (\contents -> try @IOException (decodeRows contents) >>= assertBool "expected a decoding failure" . isLeft) invalid,
+      testCase "searches multiple chunks in order and deduplicates across batches" $ do
+        let listing = directory [("bin", directory [("Tool", regular)]), (T.replicate (70 * 1024) "z", regular)]
+            first = indexed "first" listing
+            third = first {indexedPath = fmap (\path -> path {spName = "third"}) (indexedPath first)}
+            packages = [first, indexed "second" listing, third]
+            matching = filter (BS.isSuffixOf "/bin/Tool") $ expectedRows packages
+            filters = SearchFilter Nothing Nothing ['x'] True True
+        contents <- writeDatabase packages
+        matcher <- either fail pure $ pathMatcher "/bin/tool" False filters
+        collectSearch False filters matcher contents >>= (@?= map (<> "\n") matching)
+        collectSearch True filters matcher contents >>= (@?= ["first.out\n", "second.out\n"])
+        let filtered = filters {filterPackage = Just "second", filterHash = Just "0123456789abcdfghijklmnpqrsvwxyz"}
+        regex <- either fail pure $ pathMatcher "/bin/T..l" True filtered
+        collectSearch True filtered regex contents >>= (@?= ["second.out\n"]),
+      testCase "rejects a missing footer in a parallel chunk" $ do
+        let filters = SearchFilter Nothing Nothing [] False False
+            search = collectSearch False filters (const True)
+        writeDatabase [] >>= search >>= (@?= [])
+        contents <- writeDatabase [indexed "first" $ directory [("file", regular)]]
+        let truncated = LBS.take (LBS.length contents - 3) contents
+        try @IOException (search truncated) >>= assertBool "expected a decoding failure" . isLeft
     ]
 
 indexed :: Text -> FileNode -> IndexedStorePath
@@ -93,3 +116,9 @@ decodeRows contents = reverse <$> foldFrCodeRows addRow [] contents
 
 expectedRows :: [IndexedStorePath] -> [BS.ByteString]
 expectedRows = map LBS.toStrict . LBS8.lines . foldMap formatIndexedStorePath
+
+collectSearch :: Bool -> SearchFilter -> PathMatcher -> LBS.ByteString -> IO [BS.ByteString]
+collectSearch isMinimal filters matcher contents = do
+  linesSeen <- newIORef []
+  searchFrCodeChunks 2 isMinimal filters matcher (\line -> modifyIORef' linesSeen (line :)) contents
+  reverse <$> readIORef linesSeen

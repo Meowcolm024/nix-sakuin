@@ -3,11 +3,14 @@
 module Sakuin.Database.FrCode
   ( withFrCodeDatabase,
     runFrCodeSearch,
+    runFrCodeParallelSearch,
     foldFrCodeRows,
+    searchFrCodeChunks,
   )
 where
 
-import Control.Monad (void)
+import Control.Concurrent (getNumCapabilities)
+import Control.Monad (foldM, void)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (Builder, byteString, int16BE, toLazyByteString, word8)
 import Data.ByteString.Builder.Extra (safeStrategy, toLazyByteStringWith)
@@ -17,7 +20,8 @@ import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Effectful
-import Effectful.Concurrent (Concurrent)
+import Effectful.Concurrent (Concurrent, runConcurrent)
+import Effectful.Concurrent.Async (mapConcurrently)
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
 import Effectful.Exception
@@ -33,13 +37,29 @@ withFrCodeDatabase = withDatabaseWriter frCodeMagic encodeFrCodeStorePath
 
 runFrCodeSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeSearch databasePath isMinimal = interpret $ \_ -> \case
+runFrCodeSearch = runFrCodeSearchWith searchFrCodeRows
+
+runFrCodeParallelSearch ::
+  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
+runFrCodeParallelSearch = runFrCodeSearchWith $ \isMinimal filters matchesPath output contents -> do
+  workers <- getNumCapabilities
+  searchFrCodeChunks workers isMinimal filters matchesPath output contents
+
+runFrCodeSearchWith ::
+  forall es a.
+  (IOE :> es, Error SearchError :> es) =>
+  (Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
+  FilePath ->
+  Bool ->
+  Eff (Search : es) a ->
+  Eff es a
+runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters -> do
     matchesPath <- either (throwError . InvalidSearchRegex . T.pack) pure $ pathMatcher pattern isRegex filters
     result <- tryJust synchronous $ withProcessWait (decompressDatabase databasePath) $ \process -> do
       liftIO $ do
         contents <- LBS.hGetContents (getStdout process)
-        void $ foldFrCodeRows (printMatch filters matchesPath isMinimal) Set.empty contents
+        search isMinimal filters matchesPath BS.putStr contents
       checkExitCode process
     either (throwError . SearchProcessError . T.pack . displayException) pure result
   where
@@ -47,12 +67,55 @@ runFrCodeSearch databasePath isMinimal = interpret $ \_ -> \case
       Just _ -> Nothing
       Nothing -> Just err
 
-printMatch :: SearchFilter -> PathMatcher -> Bool -> Set.Set BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO (Set.Set BS.ByteString)
-printMatch filters matchesPath isMinimal seen package metadata fullPath
-  | isMinimal && Set.member package seen = pure seen
-  | not (matchesSearchFields filters matchesPath package metadata fullPath) = pure seen
-  | isMinimal = BS.putStr (package <> "\n") *> pure (Set.insert package seen)
-  | otherwise = BS.putStr (package <> "\t" <> metadata <> "\t" <> fullPath <> "\n") *> pure seen
+searchFrCodeRows :: Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
+searchFrCodeRows isMinimal filters matchesPath output = void . foldFrCodeRows printMatch Set.empty
+  where
+    printMatch seen package metadata fullPath
+      | isMinimal && Set.member package seen = pure seen
+      | matchesSearchFields filters matchesPath package metadata fullPath =
+          writeMatch isMinimal output seen (formatMatch isMinimal package metadata fullPath)
+      | otherwise = pure seen
+
+searchFrCodeChunks :: Int -> Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
+searchFrCodeChunks workers isMinimal filters matchesPath output contents = do
+  entries <- frCodeEntries contents
+  runEff . runConcurrent $ searchBatches Set.empty entries
+  where
+    searchBatches seen remaining = do
+      (chunks, rest) <- liftIO $ readChunks (max 1 workers) remaining
+      case chunks of
+        [] -> pure ()
+        _ -> do
+          matches <- mapConcurrently (liftIO . searchChunk seen) chunks
+          seen' <- liftIO $ foldM (foldM $ writeMatch isMinimal output) seen matches
+          searchBatches seen' rest
+
+    searchChunk seen reversedRecords = do
+      (_, matches) <- foldFrCodeRecords nextRecord collectMatch (seen, []) (reverse reversedRecords)
+      pure $! reverse matches
+    nextRecord [] = Right Nothing
+    nextRecord (record : rest) = Right $ Just (record, rest)
+
+    collectMatch acc@(seen, matches) package metadata fullPath
+      | isMinimal && Set.member package seen = pure acc
+      | matchesSearchFields filters matchesPath package metadata fullPath = do
+          let !line = formatMatch isMinimal package metadata fullPath
+              !seen' = if isMinimal then Set.insert package seen else seen
+          pure (seen', line : matches)
+      | otherwise = pure acc
+
+formatMatch :: Bool -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
+formatMatch isMinimal package metadata fullPath
+  | isMinimal = package
+  | otherwise = BS.concat [package, "\t", metadata, "\t", fullPath, "\n"]
+
+writeMatch :: Bool -> (BS.ByteString -> IO ()) -> Set.Set BS.ByteString -> BS.ByteString -> IO (Set.Set BS.ByteString)
+writeMatch isMinimal output seen line
+  | isMinimal && Set.member line seen = pure seen
+  | isMinimal = do
+      output (line <> "\n")
+      pure $! Set.insert line seen
+  | otherwise = output line *> pure seen
 
 frCodeMagic :: LBS.ByteString
 frCodeMagic = "SAKUIN-FRCODE\1\n"
@@ -140,45 +203,87 @@ foldFrCodeRows ::
   a ->
   LBS.ByteString ->
   m a
-foldFrCodeRows row initial input = case LBS.stripPrefix frCodeMagic input of
-  Nothing -> invalid "invalid header or unsupported version"
-  Just entries -> nextPackage initial entries
+foldFrCodeRows row initial input = frCodeEntries input >>= foldFrCodeRecords nextRecord row initial
   where
-    invalid message = fail $ "frcode database: " <> message
-    checked = either invalid pure
-    nextPackage acc remaining
-      | LBS.null remaining = pure acc
-      | otherwise = do
-          (metadata, state@(PrefixState path _), rest) <- checked $ decodeFrCodeEntry emptyPrefix remaining
+    nextRecord remaining
+      | LBS.null remaining = Right Nothing
+      | otherwise = Just <$> readFrCodeRecord remaining
+
+frCodeEntries :: (MonadFail m) => LBS.ByteString -> m LBS.ByteString
+frCodeEntries = checkFrCode . maybe (Left "invalid header or unsupported version") Right . LBS.stripPrefix frCodeMagic
+
+checkFrCode :: (MonadFail m) => Either String a -> m a
+checkFrCode = either (fail . ("frcode database: " <>)) pure
+
+data FrCodeRecord = FrCodeRecord !BS.ByteString !Int !BS.ByteString
+
+foldFrCodeRecords ::
+  (MonadFail m) =>
+  (source -> Either String (Maybe (FrCodeRecord, source))) ->
+  (a -> BS.ByteString -> BS.ByteString -> BS.ByteString -> m a) ->
+  a ->
+  source ->
+  m a
+foldFrCodeRecords nextRecord row = nextPackage
+  where
+    nextPackage acc remaining =
+      checkFrCode (nextRecord remaining) >>= \case
+        Nothing -> pure acc
+        Just (record@(FrCodeRecord metadata _ _), rest) -> do
+          state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord emptyPrefix record
           package <- case BS.stripPrefix "p" metadata of
-            Nothing -> invalid "expected a package record"
-            Just escaped -> checked $ unescapeFrCode escaped
-          storePrefix <- checked $ unescapeFrCode path
+            Nothing -> checkFrCode $ Left "expected a package record"
+            Just escaped -> checkFrCode $ unescapeFrCode escaped
+          storePrefix <- checkFrCode $ unescapeFrCode path
           nextFile package storePrefix acc state rest
     nextFile package storePrefix acc previous remaining = do
-      (metadata, state@(PrefixState path _), rest) <- checked $ decodeFrCodeEntry previous remaining
+      (record@(FrCodeRecord metadata _ _), rest) <-
+        checkFrCode $ nextRecord remaining >>= maybe (Left "missing package footer") Right
+      state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord previous record
       if BS.null metadata && BS.null path
         then nextPackage acc rest
         else case BS.uncons metadata of
           Just (digit, _) | digit >= 48 && digit <= 57 -> do
-            relativePath <- checked $ unescapeFrCode path
+            relativePath <- checkFrCode $ unescapeFrCode path
             next <- row acc package metadata (storePrefix <> relativePath)
             nextFile package storePrefix next state rest
-          _ -> invalid "invalid file metadata or missing package footer"
+          _ -> checkFrCode $ Left "invalid file metadata or missing package footer"
 
-decodeFrCodeEntry :: PrefixState -> LBS.ByteString -> Either String (BS.ByteString, PrefixState, LBS.ByteString)
-decodeFrCodeEntry (PrefixState previous previousShared) input = do
+-- Frame the stream once on the reader. Only a package footer resets the
+-- prefix state, so a package larger than the chunk target stays together.
+readChunks :: Int -> LBS.ByteString -> IO ([[FrCodeRecord]], LBS.ByteString)
+readChunks workers = checkFrCode . batch workers []
+  where
+    batch count chunks remaining
+      | count == 0 || LBS.null remaining = Right (reverse chunks, remaining)
+      | otherwise = do
+          (records, rest) <- chunk [] 0 remaining
+          batch (count - 1) (records : chunks) rest
+    chunk records !size remaining = do
+      (record@(FrCodeRecord metadata _ suffix), rest) <- readFrCodeRecord remaining
+      let records' = record : records
+          size' = size + BS.length metadata + BS.length suffix + 4
+      if (size' >= 64 * 1024 && BS.null metadata) || LBS.null rest
+        then Right (records', rest)
+        else chunk records' size' rest
+
+readFrCodeRecord :: LBS.ByteString -> Either String (FrCodeRecord, LBS.ByteString)
+readFrCodeRecord input = do
   let (metadata, separator) = LBS.break (== 0) input
   (_, encoded) <- maybe (Left "missing metadata terminator") Right $ LBS.uncons separator
   (diff, pathBytes) <- decodeDifferential encoded
-  let shared = previousShared + diff
-  if shared < 0 || shared > BS.length previous || shared > fromIntegral (maxBound @Int16)
-    then Left "shared prefix is out of range"
-    else do
-      let (suffix, newline) = LBS.break (== 10) pathBytes
-      (_, rest) <- maybe (Left "missing path terminator") Right $ LBS.uncons newline
-      let path = BS.take shared previous <> LBS.toStrict suffix
-      Right (LBS.toStrict metadata, PrefixState path shared, rest)
+  let (suffix, newline) = LBS.break (== 10) pathBytes
+  (_, rest) <- maybe (Left "missing path terminator") Right $ LBS.uncons newline
+  let !record = FrCodeRecord (LBS.toStrict metadata) diff (LBS.toStrict suffix)
+  pure (record, rest)
+
+expandFrCodeRecord :: PrefixState -> FrCodeRecord -> Either String PrefixState
+expandFrCodeRecord (PrefixState previous previousShared) (FrCodeRecord _ diff suffix)
+  | shared < 0 || shared > BS.length previous || shared > fromIntegral (maxBound @Int16) =
+      Left "shared prefix is out of range"
+  | otherwise = Right $ PrefixState (BS.take shared previous <> suffix) shared
+  where
+    shared = previousShared + diff
 
 decodeDifferential :: LBS.ByteString -> Either String (Int, LBS.ByteString)
 decodeDifferential input = do

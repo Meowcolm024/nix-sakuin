@@ -24,6 +24,17 @@ backendName Tsv = "tsv"
 backendName FrCode = "frcode"
 backendName NixIndex = "nix-index"
 
+data QueryBackend = QueryBackend
+  { queryName :: String,
+    queryDatabase :: Backend,
+    queryOptions :: [String]
+  }
+
+queryBackends :: [QueryBackend]
+queryBackends = [serial Tsv, serial FrCode, QueryBackend "frcode-parallel" FrCode ["--parallel"], serial NixIndex]
+  where
+    serial backend = QueryBackend (backendName backend) backend []
+
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
@@ -33,8 +44,8 @@ main = do
     [ env (prepare results) $ \_ ->
         bgroup
           "locate"
-          [ bgroup "hit" [bench (backendName backend) $ whnfIO (query results backend hit) | backend <- backends],
-            bgroup "miss" [bench (backendName backend) $ whnfIO (query results backend miss) | backend <- backends],
+          [ bgroup "hit" [bench (queryName backend) $ whnfIO (query results backend hit) | backend <- queryBackends],
+            bgroup "miss" [bench (queryName backend) $ whnfIO (query results backend miss) | backend <- queryBackends],
             bench "cabal-launcher" $ whnfIO (readProcessStdout_ $ proc "cabal" ["exec", "true", "--"])
           ]
     ]
@@ -62,12 +73,12 @@ prepare results = do
         let seconds = fromIntegral (end - start) / 1e9 :: Double
         hPrintf report "%s,%d,%.6f,%d\n" (backendName backend) trial seconds bytes
         printf "%-9s trial %d  %.2f s  %d bytes\n" (backendName backend) trial seconds bytes
-  forM_ backends $ \backend -> do
+  forM_ queryBackends $ \backend -> do
     found <- query results backend hit
     absent <- query results backend miss
     unless (found == "rPackages.jsonlite.out\n" && LBS.null absent) $
       fail $
-        "Unexpected query results from " <> backendName backend
+        "Unexpected query results from " <> queryName backend
 
 scope :: String
 scope =
@@ -97,10 +108,15 @@ hit, miss :: String
 hit = "/jsonlite/DESCRIPTION"
 miss = "/nix-sakuin-benchmark-absent"
 
-query :: FilePath -> Backend -> String -> IO LBS.ByteString
+query :: FilePath -> QueryBackend -> String -> IO LBS.ByteString
 query results backend pattern = readProcessStdout_ $ proc "cabal" args
   where
-    args = ["exec"] <> backendOptions <> ["--db", databaseDir results backend 2, "--minimal", "--type", "r", "--whole-name", pattern]
-    backendOptions = case backend of
+    database = queryDatabase backend
+    args =
+      ["exec"]
+        <> backendOptions
+        <> queryOptions backend
+        <> ["--db", databaseDir results database 2, "--minimal", "--type", "r", "--whole-name", pattern]
+    backendOptions = case database of
       NixIndex -> ["nix-locate", "--"]
-      _ -> ["nix-sakuin", "--", "locate", "--db-format", backendName backend]
+      _ -> ["nix-sakuin", "--", "locate", "--db-format", backendName database]

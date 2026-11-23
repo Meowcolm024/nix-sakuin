@@ -2,7 +2,7 @@ module Locate where
 
 import Cli
 import Effectful
-import Effectful.Error.Static (runErrorNoCallStackWith)
+import Effectful.Error.Static (runErrorNoCallStackWith, throwError)
 import Path (toFilePath)
 import Sakuin
 import Sakuin.Storage
@@ -11,9 +11,13 @@ import System.IO (hFlush, stdout)
 runLocate :: LocateOptions -> IO ()
 runLocate opts = do
   runEff . runErrorNoCallStackWith @SearchError (liftIO . exitErrorIO) $ do
-    databaseDir <- resolveDatabaseDir (locateDatabase opts)
     let format = locateDatabaseFormat opts
-    runDatabaseSearch format (toFilePath $ databasePathFor format databaseDir) (locateMinimal opts) $
+    runSearch <- case (format, locateParallel opts) of
+      (FrCode, True) -> pure runFrCodeParallelSearch
+      (Tsv, True) -> throwError $ SearchProcessError "--parallel requires --db-format frcode"
+      (_, False) -> pure $ runDatabaseSearch format
+    databaseDir <- resolveDatabaseDir (locateDatabase opts)
+    runSearch (toFilePath $ databasePathFor format databaseDir) (locateMinimal opts) $
       searchPaths
         (locatePattern opts)
         (locateRegex opts)

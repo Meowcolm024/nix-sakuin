@@ -25,6 +25,7 @@ data IndexOptions = IndexOptions
 data LocateOptions = LocateOptions
   { locateDatabase :: Maybe (Path Abs Dir),
     locateDatabaseFormat :: DatabaseFormat,
+    locateParallel :: Bool,
     locateRegex :: Bool,
     locatePackage :: Maybe Text,
     locateHash :: Maybe Text,
@@ -164,6 +165,7 @@ locateParser :: Parser LocateOptions
 locateParser = do
   locateDatabase <- databaseOption
   locateDatabaseFormat <- databaseFormatOption
+  locateParallel <- switch (long "parallel" <> help "Decode and search FrCode chunks in parallel")
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
   locatePackage <-
@@ -187,6 +189,7 @@ locateParser = do
     LocateOptions
       { locateDatabase,
         locateDatabaseFormat,
+        locateParallel,
         locateRegex,
         locatePackage,
         locateHash,
