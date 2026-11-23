@@ -28,21 +28,20 @@ ocamlPackages.ocaml.out
 
 For more information, see `nix-sakuin --help index`, and `nix-sakuin --help locate`.
 
-To try the FrCode format, select it when building and querying the database.
+FrCode is the default and uses `database.frcode.zst`. For TSV databases, select
+`--db-format tsv` when building or querying `database.tsv.zst`. Both files can
+coexist in the same database directory.
 
 ```sh
-$ nix-sakuin index --db-format frcode
-$ nix-sakuin locate --db-format frcode -t x --minimal /bin/ocamlopt
+$ nix-sakuin index --db-format tsv
+$ nix-sakuin locate --db-format tsv -t x --minimal /bin/ocamlopt
 ```
-
-TSV is the default. The two formats can coexist in the same database directory
-as `database.tsv.zst` and `database.frcode.zst`.
 
 Use `--parallel` on a FrCode query to decode and match chunks across GHC capabilities.
 The same database supports both query modes, and results stay in database order.
 
 ```sh
-$ nix-sakuin locate --db-format frcode --parallel -t x --minimal /bin/ocamlopt
+$ nix-sakuin locate --parallel -t x --minimal /bin/ocamlopt
 ```
 
 ## Benchmark

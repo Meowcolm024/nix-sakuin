@@ -25,7 +25,7 @@ import Effectful.Concurrent.Async (mapConcurrently)
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
 import Effectful.Exception
-import Sakuin.Database.TSV (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesSearchFields, withDatabaseWriter)
+import Sakuin.Database.Common (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesSearchFields, withDatabaseWriter)
 import Sakuin.Search
 import Sakuin.Types
 import System.IO (Handle)

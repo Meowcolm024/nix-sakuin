@@ -6,7 +6,7 @@ import Data.Version (showVersion)
 import Options.Applicative
 import Path
 import Paths_nix_sakuin (version)
-import Sakuin.Database (DatabaseFormat (..))
+import Sakuin.Database (DatabaseFormat (..), defaultDatabaseFormat)
 
 data IndexOptions = IndexOptions
   { indexDatabase :: Maybe (Path Abs Dir),
@@ -75,13 +75,16 @@ databaseFormatOption =
     (eitherReader readFormat)
     ( long "db-format"
         <> metavar "FORMAT"
-        <> value Tsv
-        <> help "Database format (tsv or frcode, default: tsv)"
+        <> value defaultDatabaseFormat
+        <> showDefaultWith formatName
+        <> help "Database format (frcode or tsv)"
     )
   where
+    formatName FrCode = "frcode"
+    formatName Tsv = "tsv"
     readFormat "tsv" = Right Tsv
     readFormat "frcode" = Right FrCode
-    readFormat _ = Left "FORMAT must be tsv or frcode"
+    readFormat _ = Left "FORMAT must be frcode or tsv"
 
 -- Parser for index command
 indexParser :: Parser IndexOptions

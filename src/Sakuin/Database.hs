@@ -1,5 +1,6 @@
 module Sakuin.Database
   ( DatabaseFormat (..),
+    defaultDatabaseFormat,
     DatabaseWriter,
     withDatabase,
     runDatabaseWriter,
@@ -16,14 +17,18 @@ where
 import Effectful
 import Effectful.Concurrent (Concurrent)
 import Effectful.Error.Static (Error)
+import Sakuin.Database.Common (DatabaseWriter, readDatabaseEntryCount, runDatabaseWriter)
 import Sakuin.Database.FrCode (runFrCodeParallelSearch, runFrCodeSearch, withFrCodeDatabase)
-import Sakuin.Database.TSV
+import Sakuin.Database.TSV (readTsvEntryCount, runTsvDatabase, runTsvSearch, withTsvDatabase)
 import Sakuin.Search (SearchError)
 import Sakuin.Types (Search)
 import System.IO (Handle)
 
 data DatabaseFormat = Tsv | FrCode
   deriving stock (Show)
+
+defaultDatabaseFormat :: DatabaseFormat
+defaultDatabaseFormat = FrCode
 
 withDatabase ::
   forall es a. (Concurrent :> es, IOE :> es) => DatabaseFormat -> Int -> Handle -> (DatabaseWriter -> Eff es a) -> Eff es a

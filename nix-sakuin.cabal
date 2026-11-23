@@ -83,6 +83,9 @@ library
     Sakuin.Types
     Sakuin.WorkQueue
 
+  other-modules:
+    Sakuin.Database.Common
+
 executable nix-sakuin
   import: shared
   hs-source-dirs: app
