@@ -2,6 +2,7 @@ module Sakuin.Database.FrCodeSpec (tests) where
 
 import Codec.Compression.Zstd.Lazy qualified as Zstd
 import Control.Exception (IOException, try)
+import Control.Monad (forM_)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
@@ -15,8 +16,8 @@ import Effectful.Concurrent
 import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
-import Sakuin.Database.FrCode (foldFrCodeRows, searchFrCodeChunks)
-import Sakuin.Database.TSV (formatIndexedStorePath)
+import Sakuin.Database.FrCode (foldFrCodeRows, frCodeMatcher, searchFrCodeChunks)
+import Sakuin.Database.TSV (formatIndexedStorePath, matchesSearchFields)
 import Sakuin.Search (pathMatcher)
 import Sakuin.Storage (withAtomicFile)
 import Sakuin.Types
@@ -85,7 +86,33 @@ tests =
         writeDatabase [] >>= search >>= (@?= [])
         contents <- writeDatabase [indexed "first" $ directory [("file", regular)]]
         let truncated = LBS.take (LBS.length contents - 3) contents
-        try @IOException (search truncated) >>= assertBool "expected a decoding failure" . isLeft
+        try @IOException (search truncated) >>= assertBool "expected a decoding failure" . isLeft,
+      testCase "relative matching agrees with full-path filters and legacy store paths" $ do
+        let prefix = "/other/store/0123456789abcdfghijklmnpqrsvwxyz-demo"
+            nested = "/other/8x37013i8mdk7i7pcr6j45qjaclpi447-parent/0123456789abcdfghijklmnpqrsvwxyz-demo"
+            uppercase = "/other/store/0123456789ABCDFGHIJKLMNPQRSVWXYZ-demo"
+            filters = SearchFilter Nothing Nothing [] False False
+            rooted = filters {filterAtRoot = True, filterWholeName = True}
+            filtered = rooted {filterPackage = Just "demo", filterHash = Just "0123456789abcdfghijklmnpqrsvwxyz", filterTypes = ['x']}
+            queries =
+              [ ("/bin/tool", False, filtered),
+                ("/bin/T..l", True, filtered),
+                ("/bin/T..l", True, rooted),
+                ("/bin/tool", False, rooted),
+                ("/bin", False, filters {filterAtRoot = True}),
+                ("Tool", False, filters {filterWholeName = True}),
+                ("-demo", False, filters),
+                (".", True, filters)
+              ]
+        forM_ queries $ \(pattern, isRegex, options) -> do
+          old <- either fail pure $ pathMatcher pattern isRegex options
+          new <- either fail pure $ frCodeMatcher pattern isRegex options
+          forM_ [prefix, nested, uppercase] $ \storePath ->
+            forM_ ["demo.out", "other.out"] $ \package ->
+              forM_ ["7 x", "7 r"] $ \metadata ->
+                forM_ ["/bin/Tool", "/bin/Tool-extra", "/xx/bin/Tool", "suffix/bin/Tool", ""] $ \relativePath ->
+                  new package storePath metadata relativePath
+                    @?= matchesSearchFields options old package metadata (storePath <> relativePath)
     ]
 
 indexed :: Text -> FileNode -> IndexedStorePath

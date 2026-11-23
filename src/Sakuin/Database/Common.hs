@@ -10,6 +10,8 @@ module Sakuin.Database.Common
     foldIndexedFiles,
     decompressDatabase,
     matchesSearchFields,
+    matchesPackageFilter,
+    matchesFileTypeFilter,
   )
 where
 
@@ -135,10 +137,17 @@ decompressDatabase databasePath = setStdout createPipe $ proc "zstd" ["--decompr
 
 matchesSearchFields :: SearchFilter -> PathMatcher -> BS.ByteString -> BS.ByteString -> BS.ByteString -> Bool
 matchesSearchFields filters matchesPath package metadata fullPath =
-  maybe True (`T.isPrefixOf` decodeUtf8 package) (filterPackage filters)
+  matchesPackageFilter filters package
     && maybe True (hasStoreHash path) (filterHash filters)
-    && (null (filterTypes filters) || maybe False (`elem` filterTypes filters) fileType)
+    && matchesFileTypeFilter filters metadata
     && matchesPath path
   where
     path = decodeUtf8 fullPath
-    fileType = snd <$> BS8.unsnoc metadata
+
+matchesPackageFilter :: SearchFilter -> BS.ByteString -> Bool
+matchesPackageFilter filters package =
+  maybe True (`T.isPrefixOf` decodeUtf8 package) (filterPackage filters)
+
+matchesFileTypeFilter :: SearchFilter -> BS.ByteString -> Bool
+matchesFileTypeFilter filters metadata =
+  null (filterTypes filters) || maybe False ((`elem` filterTypes filters) . snd) (BS8.unsnoc metadata)

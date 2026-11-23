@@ -64,7 +64,15 @@ ensureLeadingSlash value
 
 pathMatcher :: Text -> Bool -> SearchFilter -> Either String PathMatcher
 pathMatcher pattern isRegex filters
-  | isRegex = (\matches fullPath -> listingPathMatches fullPath matches) <$> regexMatcher anchoredPattern
+  | foldsStorePath isRegex filters = Right $ \fullPath -> isListingOf (T.toCaseFold fullPath) (T.toCaseFold pattern)
+  | otherwise = flip listingPathMatches <$> relativePathMatcher pattern isRegex filters
+
+foldsStorePath :: Bool -> SearchFilter -> Bool
+foldsStorePath isRegex filters = not isRegex && filterAtRoot filters && filterWholeName filters
+
+relativePathMatcher :: Text -> Bool -> SearchFilter -> Either String PathMatcher
+relativePathMatcher pattern isRegex filters
+  | isRegex = regexMatcher anchoredPattern
   | otherwise = Right $ fixedMatcher (T.toCaseFold pattern)
   where
     anchoredPattern
@@ -73,13 +81,10 @@ pathMatcher pattern isRegex filters
       | filterWholeName filters = wrap "(" ")$"
       | otherwise = pattern
     wrap before after = before <> ensureLeadingSlash pattern <> after
-    fixedMatcher query fullPath
+    fixedMatcher query candidate
       | filterAtRoot filters && filterWholeName filters =
-          isListingOf (T.toCaseFold fullPath) query
-      | filterAtRoot filters =
-          listingPathMatches fullPath (ensureLeadingSlash query `T.isPrefixOf`)
-      | otherwise = listingPathMatches fullPath (matchesFixed query)
-    matchesFixed query candidate
+          path == ensureLeadingSlash query
+      | filterAtRoot filters = ensureLeadingSlash query `T.isPrefixOf` path
       | filterWholeName filters = query `T.isSuffixOf` path
       | otherwise = query `T.isInfixOf` path
       where

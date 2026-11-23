@@ -4,6 +4,7 @@ module Sakuin.Database.FrCode
   ( withFrCodeDatabase,
     runFrCodeSearch,
     runFrCodeParallelSearch,
+    frCodeMatcher,
     foldFrCodeRows,
     searchFrCodeChunks,
   )
@@ -18,14 +19,16 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Int (Int16, Int8)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
+import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding (decodeUtf8, decodeUtf8')
 import Effectful
 import Effectful.Concurrent (Concurrent, runConcurrent)
 import Effectful.Concurrent.Async (mapConcurrently)
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
 import Effectful.Exception
-import Sakuin.Database.Common (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesSearchFields, withDatabaseWriter)
+import Sakuin.Database.Common (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesFileTypeFilter, matchesPackageFilter, matchesSearchFields, withDatabaseWriter)
 import Sakuin.Search
 import Sakuin.Types
 import System.IO (Handle)
@@ -41,25 +44,25 @@ runFrCodeSearch = runFrCodeSearchWith searchFrCodeRows
 
 runFrCodeParallelSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeParallelSearch = runFrCodeSearchWith $ \isMinimal filters matchesPath output contents -> do
+runFrCodeParallelSearch = runFrCodeSearchWith $ \isMinimal matchesPath output contents -> do
   workers <- getNumCapabilities
-  searchFrCodeChunks workers isMinimal filters matchesPath output contents
+  searchFrCodeChunksWith workers isMinimal matchesPath output contents
 
 runFrCodeSearchWith ::
   forall es a.
   (IOE :> es, Error SearchError :> es) =>
-  (Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
+  (Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
   FilePath ->
   Bool ->
   Eff (Search : es) a ->
   Eff es a
 runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters -> do
-    matchesPath <- either (throwError . InvalidSearchRegex . T.pack) pure $ pathMatcher pattern isRegex filters
+    matchesPath <- either (throwError . InvalidSearchRegex . T.pack) pure $ frCodeMatcher pattern isRegex filters
     result <- tryJust synchronous $ withProcessWait (decompressDatabase databasePath) $ \process -> do
       liftIO $ do
         contents <- LBS.hGetContents (getStdout process)
-        search isMinimal filters matchesPath BS.putStr contents
+        search isMinimal matchesPath BS.putStr contents
       checkExitCode process
     either (throwError . SearchProcessError . T.pack . displayException) pure result
   where
@@ -67,17 +70,54 @@ runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
       Just _ -> Nothing
       Nothing -> Just err
 
-searchFrCodeRows :: Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
-searchFrCodeRows isMinimal filters matchesPath output = void . foldFrCodeRows printMatch Set.empty
+-- The first two arguments prepare a predicate for a single package. Its
+-- file records then supply their metadata and their relative path.
+type FrCodeMatcher = BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString -> Bool
+
+frCodeMatcher :: Text -> Bool -> SearchFilter -> Either String FrCodeMatcher
+frCodeMatcher pattern isRegex filters = prepare <$> relativePathMatcher pattern isRegex filters
   where
-    printMatch seen package metadata fullPath
-      | isMinimal && Set.member package seen = pure seen
-      | matchesSearchFields filters matchesPath package metadata fullPath =
-          writeMatch isMinimal output seen (formatMatch isMinimal package metadata fullPath)
-      | otherwise = pure seen
+    foldStorePath = foldsStorePath isRegex filters
+    forListing path
+      | foldStorePath = T.toCaseFold path
+      | otherwise = path
+    prepare matchesPath package storePrefix
+      | not (matchesPackageFilter filters package) = \_ _ -> False
+      | otherwise = case decodeUtf8' storePrefix of
+          Right prefix
+            | Just (storePath, "/") <- listingParts (prefix <> "/"),
+              not foldStorePath || maybe False ((== "/") . snd) (listingParts (T.toCaseFold prefix <> "/")) ->
+                let matchesHash = maybe True (== spHash storePath) (filterHash filters)
+                 in \metadata relativePath ->
+                      if "/" `BS.isPrefixOf` relativePath
+                        then matchesHash && matchesFileTypeFilter filters metadata && matchesPath (decodeUtf8 relativePath)
+                        else not (BS.null relativePath) && fallback metadata relativePath
+          _ -> fallback
+      where
+        -- Some store directories have an earlier hash-shaped component. Use
+        -- the existing full-path heuristic when the header is ambiguous.
+        fallback metadata relativePath =
+          matchesSearchFields filters (\path -> listingPathMatches (forListing path) matchesPath) package metadata (storePrefix <> relativePath)
+
+searchFrCodeRows :: Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
+searchFrCodeRows isMinimal matchesPath output = void . foldFrCodePackages printPackageMatches Set.empty
+  where
+    printPackageMatches package storePrefix = printMatch
+      where
+        matchesRow = matchesPath package storePrefix
+        printMatch seen metadata relativePath
+          | isMinimal && Set.member package seen = pure seen
+          | matchesRow metadata relativePath =
+              writeMatch isMinimal output seen (formatMatch isMinimal package metadata storePrefix relativePath)
+          | otherwise = pure seen
 
 searchFrCodeChunks :: Int -> Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
-searchFrCodeChunks workers isMinimal filters matchesPath output contents = do
+searchFrCodeChunks workers isMinimal filters matchesPath =
+  searchFrCodeChunksWith workers isMinimal $ \package storePrefix metadata relativePath ->
+    matchesSearchFields filters matchesPath package metadata (storePrefix <> relativePath)
+
+searchFrCodeChunksWith :: Int -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
+searchFrCodeChunksWith workers isMinimal matchesPath output contents = do
   entries <- frCodeEntries contents
   runEff . runConcurrent $ searchBatches Set.empty entries
   where
@@ -96,18 +136,21 @@ searchFrCodeChunks workers isMinimal filters matchesPath output contents = do
     nextRecord [] = Right Nothing
     nextRecord (record : rest) = Right $ Just (record, rest)
 
-    collectMatch acc@(seen, matches) package metadata fullPath
-      | isMinimal && Set.member package seen = pure acc
-      | matchesSearchFields filters matchesPath package metadata fullPath = do
-          let !line = formatMatch isMinimal package metadata fullPath
-              !seen' = if isMinimal then Set.insert package seen else seen
-          pure (seen', line : matches)
-      | otherwise = pure acc
+    collectMatch package storePrefix = collect
+      where
+        matchesRow = matchesPath package storePrefix
+        collect acc@(seen, matches) metadata relativePath
+          | isMinimal && Set.member package seen = pure acc
+          | matchesRow metadata relativePath = do
+              let !line = formatMatch isMinimal package metadata storePrefix relativePath
+                  !seen' = if isMinimal then Set.insert package seen else seen
+              pure (seen', line : matches)
+          | otherwise = pure acc
 
-formatMatch :: Bool -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
-formatMatch isMinimal package metadata fullPath
+formatMatch :: Bool -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
+formatMatch isMinimal package metadata storePrefix relativePath
   | isMinimal = package
-  | otherwise = BS.concat [package, "\t", metadata, "\t", fullPath, "\n"]
+  | otherwise = BS.concat [package, "\t", metadata, "\t", storePrefix, relativePath, "\n"]
 
 writeMatch :: Bool -> (BS.ByteString -> IO ()) -> Set.Set BS.ByteString -> BS.ByteString -> IO (Set.Set BS.ByteString)
 writeMatch isMinimal output seen line
@@ -203,7 +246,16 @@ foldFrCodeRows ::
   a ->
   LBS.ByteString ->
   m a
-foldFrCodeRows row initial input = frCodeEntries input >>= foldFrCodeRecords nextRecord row initial
+foldFrCodeRows row = foldFrCodePackages $ \package storePrefix acc metadata relativePath ->
+  row acc package metadata (storePrefix <> relativePath)
+
+foldFrCodePackages ::
+  (MonadFail m) =>
+  (BS.ByteString -> BS.ByteString -> a -> BS.ByteString -> BS.ByteString -> m a) ->
+  a ->
+  LBS.ByteString ->
+  m a
+foldFrCodePackages rows initial input = frCodeEntries input >>= foldFrCodeRecords nextRecord rows initial
   where
     nextRecord remaining
       | LBS.null remaining = Right Nothing
@@ -220,11 +272,11 @@ data FrCodeRecord = FrCodeRecord !BS.ByteString !Int !BS.ByteString
 foldFrCodeRecords ::
   (MonadFail m) =>
   (source -> Either String (Maybe (FrCodeRecord, source))) ->
-  (a -> BS.ByteString -> BS.ByteString -> BS.ByteString -> m a) ->
+  (BS.ByteString -> BS.ByteString -> a -> BS.ByteString -> BS.ByteString -> m a) ->
   a ->
   source ->
   m a
-foldFrCodeRecords nextRecord row = nextPackage
+foldFrCodeRecords nextRecord packageRows = nextPackage
   where
     nextPackage acc remaining =
       checkFrCode (nextRecord remaining) >>= \case
@@ -235,8 +287,8 @@ foldFrCodeRecords nextRecord row = nextPackage
             Nothing -> checkFrCode $ Left "expected a package record"
             Just escaped -> checkFrCode $ unescapeFrCode escaped
           storePrefix <- checkFrCode $ unescapeFrCode path
-          nextFile package storePrefix acc state rest
-    nextFile package storePrefix acc previous remaining = do
+          nextFile (packageRows package storePrefix) acc state rest
+    nextFile row acc previous remaining = do
       (record@(FrCodeRecord metadata _ _), rest) <-
         checkFrCode $ nextRecord remaining >>= maybe (Left "missing package footer") Right
       state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord previous record
@@ -245,8 +297,8 @@ foldFrCodeRecords nextRecord row = nextPackage
         else case BS.uncons metadata of
           Just (digit, _) | digit >= 48 && digit <= 57 -> do
             relativePath <- checkFrCode $ unescapeFrCode path
-            next <- row acc package metadata (storePrefix <> relativePath)
-            nextFile package storePrefix next state rest
+            next <- row acc metadata relativePath
+            nextFile row next state rest
           _ -> checkFrCode $ Left "invalid file metadata or missing package footer"
 
 -- Frame the stream once on the reader. Only a package footer resets the
