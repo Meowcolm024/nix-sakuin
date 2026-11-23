@@ -1,3 +1,4 @@
+import Sakuin.Database.FrCodeSpec qualified as FrCodeSpec
 import Sakuin.DatabaseSpec qualified as DatabaseSpec
 import Sakuin.FetchCacheSpec qualified as FetchCacheSpec
 import Sakuin.HydraSpec qualified as HydraSpec
@@ -16,6 +17,7 @@ main =
     testGroup
       "nix-sakuin"
       [ DatabaseSpec.tests,
+        FrCodeSpec.tests,
         FetchCacheSpec.tests,
         TypesSpec.tests,
         SearchSpec.tests,

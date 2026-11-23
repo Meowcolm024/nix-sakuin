@@ -12,7 +12,8 @@ runLocate :: LocateOptions -> IO ()
 runLocate opts = do
   runEff . runErrorNoCallStackWith @SearchError (liftIO . exitErrorIO) $ do
     databaseDir <- resolveDatabaseDir (locateDatabase opts)
-    runTsvSearch (toFilePath $ databasePath databaseDir) (locateMinimal opts) $
+    let format = locateDatabaseFormat opts
+    runDatabaseSearch format (toFilePath $ databasePathFor format databaseDir) (locateMinimal opts) $
       searchPaths
         (locatePattern opts)
         (locateRegex opts)

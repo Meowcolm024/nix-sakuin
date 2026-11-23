@@ -6,6 +6,7 @@ import Effectful
 import Effectful.Exception (ExitCase (..), generalBracket, onException)
 import Path
 import Path.IO
+import Sakuin.Database (DatabaseFormat (..))
 import System.IO (Handle, hClose)
 
 withAtomicFile :: forall es a. (IOE :> es) => Path Abs File -> (Handle -> Eff es a) -> Eff es a
@@ -21,7 +22,13 @@ withAtomicFile destination action = fst <$> generalBracket acquire release (acti
         ExitCaseAbort -> removeTemporary
 
 databasePath :: Path Abs Dir -> Path Abs File
-databasePath directory = directory </> [relfile|database.tsv.zst|]
+databasePath = databasePathFor Tsv
+
+databasePathFor :: DatabaseFormat -> Path Abs Dir -> Path Abs File
+databasePathFor format directory =
+  directory </> case format of
+    Tsv -> [relfile|database.tsv.zst|]
+    FrCode -> [relfile|database.frcode.zst|]
 
 resolveDatabaseDir :: forall es. (IOE :> es) => Maybe (Path Abs Dir) -> Eff es (Path Abs Dir)
 resolveDatabaseDir configured = do

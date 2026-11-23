@@ -6,9 +6,11 @@ import Data.Version (showVersion)
 import Options.Applicative
 import Path
 import Paths_nix_sakuin (version)
+import Sakuin.Database (DatabaseFormat (..))
 
 data IndexOptions = IndexOptions
   { indexDatabase :: Maybe (Path Abs Dir),
+    indexDatabaseFormat :: DatabaseFormat,
     indexFilterPrefix :: Maybe Text,
     indexSystem :: Maybe Text,
     indexWorker :: Int,
@@ -22,6 +24,7 @@ data IndexOptions = IndexOptions
 
 data LocateOptions = LocateOptions
   { locateDatabase :: Maybe (Path Abs Dir),
+    locateDatabaseFormat :: DatabaseFormat,
     locateRegex :: Bool,
     locatePackage :: Maybe Text,
     locateHash :: Maybe Text,
@@ -65,10 +68,25 @@ databaseOption =
         <> help "Directory where the index is stored (default: $XDG_CACHE_HOME/nix-sakuin)"
     )
 
+databaseFormatOption :: Parser DatabaseFormat
+databaseFormatOption =
+  option
+    (eitherReader readFormat)
+    ( long "db-format"
+        <> metavar "FORMAT"
+        <> value Tsv
+        <> help "Database format (tsv or frcode, default: tsv)"
+    )
+  where
+    readFormat "tsv" = Right Tsv
+    readFormat "frcode" = Right FrCode
+    readFormat _ = Left "FORMAT must be tsv or frcode"
+
 -- Parser for index command
 indexParser :: Parser IndexOptions
 indexParser = do
   indexDatabase <- databaseOption
+  indexDatabaseFormat <- databaseFormatOption
   indexFilterPrefix <-
     optionMaybe
       str
@@ -130,6 +148,7 @@ indexParser = do
   pure $
     IndexOptions
       { indexDatabase,
+        indexDatabaseFormat,
         indexFilterPrefix,
         indexSystem,
         indexWorker,
@@ -144,6 +163,7 @@ indexParser = do
 locateParser :: Parser LocateOptions
 locateParser = do
   locateDatabase <- databaseOption
+  locateDatabaseFormat <- databaseFormatOption
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
   locatePackage <-
@@ -166,6 +186,7 @@ locateParser = do
   pure $
     LocateOptions
       { locateDatabase,
+        locateDatabaseFormat,
         locateRegex,
         locatePackage,
         locateHash,

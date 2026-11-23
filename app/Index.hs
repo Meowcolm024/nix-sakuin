@@ -50,6 +50,7 @@ withFetchCache enabled manager action
 runIndex :: IndexOptions -> IO ()
 runIndex opts = do
   let writeQueueCapacity = max 1 (indexWorker opts * 2)
+      format = indexDatabaseFormat opts
   -- Nothing represents the default scope
   let scopes = nub $ (if indexNoDefaultScope opts then [] else [Nothing]) <> map Just (indexExtraScopes opts)
   manager <- newTlsManager
@@ -61,21 +62,22 @@ runIndex opts = do
       . runLog logger
       $ do
         databaseDir <- resolveDatabaseDir (indexDatabase opts)
-        withAtomicFile (databasePath databaseDir) $ \handle ->
-          withTsvDatabase writeQueueCapacity handle $ \database -> do
+        database <- withAtomicFile (databasePathFor format databaseDir) $ \handle ->
+          withDatabase format writeQueueCapacity handle $ \writer -> do
             liftIO $ T.putStrLn "querying root packages"
             logInfo $ "root packages scopes: " <> T.intercalate ", " (map (maybe "(default)" id) scopes)
             pkgs@(Packages pkgs') <- queryAllScopes (indexNixpkgsPath opts) (indexSystem opts) scopes
             logInfo $ "root packages count: " <> T.show (length pkgs')
-            withFetchCache (indexFetchCache opts) manager . runTsvDatabase database $
+            withFetchCache (indexFetchCache opts) manager . runDatabaseWriter writer $
               runPipeline
                 defaultPipelineConfig
                   { pipelineWorkerCount = indexWorker opts,
                     pipelineFilterPrefix = indexFilterPrefix opts,
-                    pipelineIndexedCount = Just $ readTsvEntryCount database
+                    pipelineIndexedCount = Just $ readDatabaseEntryCount writer
                   }
                 pkgs
-            readTsvEntryCount database
+            pure writer
+        readDatabaseEntryCount database
 
   T.putStrLn $ "summary: " <> T.show size <> " paths indexed"
   hFlush stdout
