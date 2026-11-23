@@ -34,9 +34,8 @@ queryBackends :: [QueryBackend]
 queryBackends =
   [ serial Tsv,
     serial FrCode,
+    QueryBackend "frcode-pure" FrCode ["--pure"],
     QueryBackend "frcode-parallel" FrCode ["--parallel"],
-    QueryBackend "frcode-ripgrep" FrCode ["--ripgrep"],
-    QueryBackend "frcode-parallel-ripgrep" FrCode ["--parallel", "--ripgrep"],
     QueryBackend "frcode-c" FrCode ["--cheat"],
     serial NixIndex
   ]

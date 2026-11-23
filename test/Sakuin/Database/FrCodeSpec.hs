@@ -16,7 +16,7 @@ import Effectful.Concurrent
 import Path (toFilePath)
 import Path.IO (withSystemTempFile)
 import Sakuin.Database
-import Sakuin.Database.FrCode (foldFrCodeRows, frCodeMatcher, searchFrCodeChunks)
+import Sakuin.Database.FrCode (foldFrCodeRows, frCodeMatcher, searchFrCodeChunks, searchFrCodeRows)
 import Sakuin.Database.TSV (formatIndexedStorePath, matchesSearchFields)
 import Sakuin.Search (pathMatcher)
 import Sakuin.Storage (withAtomicFile)
@@ -87,6 +87,36 @@ tests =
         contents <- writeDatabase [indexed "first" $ directory [("file", regular)]]
         let truncated = LBS.take (LBS.length contents - 3) contents
         try @IOException (search truncated) >>= assertBool "expected a decoding failure" . isLeft,
+      testCase "serial search retains output while growing and reusing the path buffer" $ do
+        let prefix = T.replicate 200 "a"
+            longPath = prefix <> T.replicate 500 "b"
+            listing = directory [(prefix <> "-short", regular), (longPath <> "x", regular), (longPath <> "y", regular), ("z", regular)]
+            packages = [indexed "first" listing, indexed "second" $ directory [("tiny", regular)]]
+            filters = SearchFilter Nothing Nothing [] False False
+        contents <- writeDatabase packages
+        matcher <- either fail pure $ frCodeMatcher "" False filters
+        rows <- newIORef []
+        let save line = modifyIORef' rows (line :)
+        searchFrCodeRows False matcher save contents
+        reverse <$> readIORef rows >>= (@?= map (<> "\n") (expectedRows packages))
+        let truncated = LBS.take (LBS.length contents - 3) contents
+        try @IOException (searchFrCodeRows True matcher save truncated) >>= assertBool "expected a decoding failure" . isLeft,
+      testCase "serial search reads records split at every byte" $ do
+        let store = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-demo"
+            header = magic <> "pdemo.out\0\0" <> LBS.fromStrict store <> "\n"
+            -- The extended differential includes both framing bytes.
+            contents = LBS.toStrict $ header <> "7 x\0\0/abcdefghijklmnopqrst\n7 x\0\128\0\10/file\n\0\246\n"
+            expected = ["demo.out\t7 x\t" <> store <> "/abcdefghijklmnopqrst\n", "demo.out\t7 x\t" <> store <> "/abcdefghi/file\n"]
+            filters = SearchFilter Nothing Nothing [] False False
+        matcher <- either fail pure $ frCodeMatcher "" False filters
+        forM_ [0 .. BS.length contents] $ \offset -> do
+          let (before, after) = BS.splitAt offset contents
+          rows <- newIORef []
+          searchFrCodeRows False matcher (\line -> modifyIORef' rows (line :)) $ LBS.fromChunks [before, after]
+          reverse <$> readIORef rows >>= (@?= expected)
+        let broken = LBS.fromChunks [LBS.toStrict header <> "7 x\0\128", "\0"]
+        try @IOException (searchFrCodeRows True matcher (const $ pure ()) broken)
+          >>= assertBool "expected a truncated differential error" . isLeft,
       testCase "relative matching agrees with full-path filters and legacy store paths" $ do
         let prefix = "/other/store/0123456789abcdfghijklmnpqrsvwxyz-demo"
             nested = "/other/8x37013i8mdk7i7pcr6j45qjaclpi447-parent/0123456789abcdfghijklmnpqrsvwxyz-demo"

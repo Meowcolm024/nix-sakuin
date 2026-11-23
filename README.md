@@ -44,11 +44,9 @@ capabilities while preserving database order.
 $ nix-sakuin locate --parallel -t x --minimal /bin/ocamlopt
 ```
 
-Use `--ripgrep` to benchmark streaming decoded FrCode rows through `rg`.
-It prefilters on ASCII literals when available and applies the FrCode matcher
-to the candidate rows. Combine `--parallel --ripgrep` to decode chunks across
-GHC capabilities and send them to `rg` as they finish. Rows from different
-chunks may appear out of database order.
+Use `--pure` to query FrCode with the immutable Haskell decoder and
+`Text` matching. The default serial mode parses strict chunks into a reusable
+path buffer. Criterion measures both against the same FrCode database.
 
 Use `--cheat` to try the experimental C backend with an existing FrCode
 database. It runs on one thread and uses the platform's POSIX extended regular

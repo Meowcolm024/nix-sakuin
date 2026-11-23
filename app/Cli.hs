@@ -26,7 +26,7 @@ data LocateOptions = LocateOptions
   { locateDatabase :: Maybe (Path Abs Dir),
     locateDatabaseFormat :: DatabaseFormat,
     locateParallel :: Bool,
-    locateRipgrep :: Bool,
+    locatePure :: Bool,
     locateCheat :: Bool,
     locateRegex :: Bool,
     locatePackage :: Maybe Text,
@@ -171,7 +171,7 @@ locateParser = do
   locateDatabase <- databaseOption
   locateDatabaseFormat <- databaseFormatOption
   locateParallel <- switch (long "parallel" <> help "Decode FrCode chunks in parallel")
-  locateRipgrep <- switch (long "ripgrep" <> help "Prefilter decoded FrCode rows with ripgrep")
+  locatePure <- switch (long "pure" <> help "Use the immutable Haskell FrCode decoder and Text matcher")
   locateCheat <- switch (long "cheat" <> help "Search FrCode using the experimental C backend")
   locateRegex <-
     switch (long "regex" <> short 'r' <> help "Treat PATTERN as regex")
@@ -197,7 +197,7 @@ locateParser = do
       { locateDatabase,
         locateDatabaseFormat,
         locateParallel,
-        locateRipgrep,
+        locatePure,
         locateCheat,
         locateRegex,
         locatePackage,

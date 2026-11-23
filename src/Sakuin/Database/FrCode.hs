@@ -3,28 +3,28 @@
 module Sakuin.Database.FrCode
   ( withFrCodeDatabase,
     runFrCodeSearch,
+    runFrCodePureSearch,
     runFrCodeParallelSearch,
-    runFrCodeParallelRipgrepSearch,
-    runFrCodeRipgrepSearch,
     frCodeMatcher,
     foldFrCodeRows,
+    searchFrCodeRows,
     searchFrCodeChunks,
   )
 where
 
 import Control.Concurrent (getNumCapabilities)
-import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Exception qualified as E
-import Control.Monad (foldM, replicateM_, void)
+import Control.Monad (foldM, void, when)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (Builder, byteString, int16BE, toLazyByteString, word8)
 import Data.ByteString.Builder.Extra (safeStrategy, toLazyByteStringWith)
-import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Internal qualified as BSI
 import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString.Lazy.Internal qualified as LBSI
 import Data.ByteString.Unsafe qualified as BSU
 import Data.Int (Int16, Int8)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Primitive.ByteArray qualified as BA
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -32,15 +32,18 @@ import Data.Text.Encoding (decodeUtf8, decodeUtf8', encodeUtf8)
 import Data.Word (Word8)
 import Effectful
 import Effectful.Concurrent (Concurrent, runConcurrent)
-import Effectful.Concurrent.Async (concurrently_, mapConcurrently, mapConcurrently_)
+import Effectful.Concurrent.Async (mapConcurrently)
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
 import Effectful.Exception
-import Sakuin.Database.Common (DatabaseWriter, checkRgExitCode, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesFileTypeFilter, matchesPackageFilter, matchesSearchFields, rgBaseArguments, withDatabaseWriter)
+import Foreign.ForeignPtr (ForeignPtr)
+import Foreign.Ptr (castPtr)
+import GHC.Exts (RealWorld)
+import Sakuin.Database.Common (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesFileTypeFilter, matchesPackageFilter, matchesSearchFields, withDatabaseWriter)
 import Sakuin.Search
 import Sakuin.Types
-import System.IO (BufferMode (BlockBuffering), Handle, hClose, hIsEOF, hSetBuffering)
-import System.Process.Typed (checkExitCode, createPipe, getStdin, getStdout, proc, setStdin, setStdout, withProcessWait)
+import System.IO (Handle)
+import System.Process.Typed (checkExitCode, getStdout, withProcessWait)
 
 withFrCodeDatabase ::
   forall es a. (Concurrent :> es, IOE :> es) => Int -> Handle -> (DatabaseWriter -> Eff es a) -> Eff es a
@@ -48,39 +51,35 @@ withFrCodeDatabase = withDatabaseWriter frCodeMagic encodeFrCodeStorePath
 
 runFrCodeSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeSearch = runFrCodeSearchWith $ \_ _ -> searchFrCodeRows
+runFrCodeSearch = runFrCodeSearchWith frCodeMatcher searchFrCodeRows
+
+runFrCodePureSearch ::
+  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
+runFrCodePureSearch = runFrCodeSearchWith (frCodeMatcherWith False) $ \isMinimal matchesPath output ->
+  void . foldFrCodePackages (printFrCodeMatches isMinimal matchesPath output) Set.empty
 
 runFrCodeParallelSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeParallelSearch = runFrCodeSearchWith $ \_ _ isMinimal matchesPath output contents -> do
+runFrCodeParallelSearch = runFrCodeSearchWith frCodeMatcher $ \isMinimal matchesPath output contents -> do
   workers <- getNumCapabilities
   searchFrCodeChunksWith workers isMinimal matchesPath output contents
-
-runFrCodeRipgrepSearch ::
-  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeRipgrepSearch = runFrCodeSearchWith (searchFrCodeWithRg Nothing)
-
-runFrCodeParallelRipgrepSearch ::
-  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeParallelRipgrepSearch = runFrCodeSearchWith $ \pattern isRegex isMinimal matchesPath output contents -> do
-  workers <- getNumCapabilities
-  searchFrCodeWithRg (Just workers) pattern isRegex isMinimal matchesPath output contents
 
 runFrCodeSearchWith ::
   forall es a.
   (IOE :> es, Error SearchError :> es) =>
-  (Text -> Bool -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
+  (Text -> Bool -> SearchFilter -> Either String FrCodeMatcher) ->
+  (Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
   FilePath ->
   Bool ->
   Eff (Search : es) a ->
   Eff es a
-runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
+runFrCodeSearchWith matcher search databasePath isMinimal = interpret $ \_ -> \case
   SearchPaths pattern isRegex filters -> do
-    matchesPath <- either (throwError . InvalidSearchRegex . T.pack) pure $ frCodeMatcher pattern isRegex filters
+    matchesPath <- either (throwError . InvalidSearchRegex . T.pack) pure $ matcher pattern isRegex filters
     result <- tryJust synchronous $ withProcessWait (decompressDatabase databasePath) $ \process -> do
       liftIO $ do
         contents <- LBS.hGetContents (getStdout process)
-        search pattern isRegex isMinimal matchesPath BS.putStr contents
+        search isMinimal matchesPath BS.putStr contents
       checkExitCode process
     either (throwError . SearchProcessError . T.pack . displayException) pure result
   where
@@ -93,7 +92,10 @@ runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
 type FrCodeMatcher = BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString -> Bool
 
 frCodeMatcher :: Text -> Bool -> SearchFilter -> Either String FrCodeMatcher
-frCodeMatcher pattern isRegex filters = prepare <$> relativePathMatcher pattern isRegex filters
+frCodeMatcher = frCodeMatcherWith True
+
+frCodeMatcherWith :: Bool -> Text -> Bool -> SearchFilter -> Either String FrCodeMatcher
+frCodeMatcherWith useAsciiFastPath pattern isRegex filters = prepare <$> relativePathMatcher pattern isRegex filters
   where
     foldStorePath = foldsStorePath isRegex filters
     forListing path
@@ -101,7 +103,7 @@ frCodeMatcher pattern isRegex filters = prepare <$> relativePathMatcher pattern 
       | otherwise = path
     matchesAscii = asciiLiteralMatcher pattern filters
     matchesRelative matchesPath relativePath
-      | not isRegex && BS.all (< 128) relativePath = matchesAscii relativePath
+      | useAsciiFastPath && not isRegex && BS.all (< 128) relativePath = matchesAscii relativePath
       | otherwise = matchesPath (decodeUtf8 relativePath)
     prepare matchesPath package storePrefix
       | not (matchesPackageFilter filters package) = \_ _ -> False
@@ -157,103 +159,35 @@ asciiLower byte
   | otherwise = byte
 
 searchFrCodeRows :: Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
-searchFrCodeRows isMinimal matchesPath output = void . foldFrCodePackages printPackageMatches Set.empty
+searchFrCodeRows isMinimal matchesPath output input = do
+  contents <- frCodeEntries input
+  initial <- newPathBuffer 256
+  let printMatches = printFrCodeMatches isMinimal matchesPath output
+  void $ foldFrCodeRecordsWith nextStrictRecord beginBufferedPath expandBufferedPath printMatches initial Set.empty (FrCodeCursor contents 0)
+
+printFrCodeMatches ::
+  Bool ->
+  FrCodeMatcher ->
+  (BS.ByteString -> IO ()) ->
+  BS.ByteString ->
+  BS.ByteString ->
+  Set.Set BS.ByteString ->
+  BS.ByteString ->
+  BS.ByteString ->
+  IO (Set.Set BS.ByteString)
+printFrCodeMatches isMinimal matchesPath output package storePrefix = printMatch
   where
-    printPackageMatches package storePrefix = printMatch
-      where
-        matchesRow = matchesPath package storePrefix
-        printMatch seen metadata relativePath
-          | isMinimal && Set.member package seen = pure seen
-          | matchesRow metadata relativePath =
-              writeMatch isMinimal output seen (formatMatch isMinimal package metadata storePrefix relativePath)
-          | otherwise = pure seen
-
-searchFrCodeWithRg :: Maybe Int -> Text -> Bool -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
-searchFrCodeWithRg workers pattern isRegex isMinimal matchesPath output contents =
-  withProcessWait config $ \process -> do
-    runEff . runConcurrent $
-      concurrently_ (feed (getStdin process)) (liftIO $ drain (getStdout process) Set.empty)
-    checkRgExitCode process
-  where
-    config = setStdin createPipe . setStdout createPipe $ proc "rg" (rgFrCodeArguments pattern isRegex)
-
-    -- Escape the two framing bytes so tabs and newlines in a path survive
-    -- the round trip through ripgrep.
-    feed input = do
-      liftIO $ hSetBuffering input (BlockBuffering Nothing)
-      case workers of
-        Nothing -> liftIO $ foldFrCodePackages (feedPackage input) () contents
-        Just count -> foldFrCodeBatches count (feedBatch input) () contents
-      liftIO $ hClose input
-
-    feedPackage input package storePrefix =
-      let header = rgRowHeader package storePrefix
-       in \() metadata relativePath ->
-            BS.hPut input $ BS.concat (rgRowFields header metadata relativePath)
-
-    feedBatch input () chunks = do
-      completed <- liftIO newChan
-      let publish chunk = encodeChunk chunk >>= writeChan completed
-      -- Workers publish complete chunks. Only this consumer writes to rg,
-      -- so completion order cannot interleave the bytes of two chunks.
-      concurrently_
-        (mapConcurrently_ (liftIO . publish) chunks)
-        (liftIO $ replicateM_ (length chunks) (readChan completed >>= LBS.hPut input))
-
-    encodeChunk records = do
-      rows <- foldFrCodeRecords nextChunkRecord collectPackage [] (reverse records)
-      let encoded = toLazyByteString (mconcat $ reverse rows)
-      -- Force encoding in the worker, before the single consumer writes it.
-      _ <- E.evaluate (LBS.length encoded)
-      pure encoded
-
-    collectPackage package storePrefix =
-      let header = rgRowHeader package storePrefix
-       in \rows metadata relativePath ->
-            pure (foldMap byteString (rgRowFields header metadata relativePath) : rows)
-
-    rgRowHeader package storePrefix = BS.concat [escapeFrCode package, "\0", escapeFrCode storePrefix, "\0"]
-    rgRowFields header metadata relativePath = [header, metadata, "\0", escapeFrCode relativePath, "\n"]
-
-    drain input seen = do
-      atEnd <- hIsEOF input
-      if atEnd
-        then pure ()
-        else do
-          line <- BS8.hGetLine input
-          seen' <- case BS.split 0 line of
-            [packageBytes, storeBytes, metadata, pathBytes] -> do
-              package <- checkFrCode $ unescapeFrCode packageBytes
-              if isMinimal && Set.member package seen
-                then pure seen
-                else do
-                  storePrefix <- checkFrCode $ unescapeFrCode storeBytes
-                  relativePath <- checkFrCode $ unescapeFrCode pathBytes
-                  if matchesPath package storePrefix metadata relativePath
-                    then writeMatch isMinimal output seen (formatMatch isMinimal package metadata storePrefix relativePath)
-                    else pure seen
-            _ -> fail "invalid FrCode row from rg"
-          drain input seen'
-
-rgFrCodeArguments :: Text -> Bool -> [String]
-rgFrCodeArguments pattern isRegex =
-  ["--no-config"] <> rgBaseArguments <> prefilter <> ["--", "-"]
-  where
-    -- A plain regex (possibly anchored) has a required literal. Other regexes
-    -- go through unchanged to the exact matcher after ripgrep passes the rows.
-    unanchored = fromMaybe pattern (T.stripPrefix "^" pattern)
-    literal = fromMaybe unanchored (T.stripSuffix "$" unanchored)
-    printableAscii = T.all (\c -> c >= ' ' && c <= '~')
-    regexMeta c = c `elem` ("\\.^$|?*+()[]{}" :: String)
-    quote c = if regexMeta c then T.pack ['\\', c] else T.singleton c
-    prefilter
-      | isRegex && printableAscii literal && not (T.any regexMeta literal) =
-          ["--fixed-strings", "-e", T.unpack literal]
-      | not isRegex && printableAscii pattern =
-          -- Unicode full case folding can expand a character (e.g. ß to ss).
-          -- Send non-ASCII rows to the Haskell matcher to preserve those hits.
-          ["--ignore-case", "-e", T.unpack (T.concatMap quote pattern), "-e", "(?-u:[\\x80-\\xff])"]
-      | otherwise = ["-e", ""]
+    matchesRow = matchesPath package storePrefix
+    printMatch seen metadata relativePath
+      | isMinimal && Set.member package seen = pure seen
+      | otherwise = do
+          matched <- E.evaluate $ matchesRow metadata relativePath
+          if matched
+            then do
+              -- Force the owned output before the buffered decoder advances.
+              line <- E.evaluate $ formatMatch isMinimal package metadata storePrefix relativePath
+              writeMatch isMinimal output seen line
+            else pure seen
 
 searchFrCodeChunks :: Int -> Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
 searchFrCodeChunks workers isMinimal filters matchesPath =
@@ -391,11 +325,45 @@ foldFrCodePackages ::
   a ->
   LBS.ByteString ->
   m a
-foldFrCodePackages rows initial input = frCodeEntries input >>= foldFrCodeRecords nextRecord rows initial
-  where
-    nextRecord remaining
-      | LBS.null remaining = Right Nothing
-      | otherwise = Just <$> readFrCodeRecord remaining
+foldFrCodePackages rows initial input = frCodeEntries input >>= foldFrCodeRecords nextStreamRecord rows initial
+
+nextStreamRecord :: LBS.ByteString -> Either String (Maybe (FrCodeRecord, LBS.ByteString))
+nextStreamRecord remaining
+  | LBS.null remaining = Right Nothing
+  | otherwise = Just <$> readFrCodeRecord remaining
+
+-- The offset is within the first strict chunk, or at its end.
+data FrCodeCursor = FrCodeCursor !LBS.ByteString !Int
+
+nextStrictRecord :: FrCodeCursor -> Either String (Maybe (FrCodeRecord, FrCodeCursor))
+nextStrictRecord (FrCodeCursor LBSI.Empty _) = Right Nothing
+nextStrictRecord (FrCodeCursor input@(LBSI.Chunk chunk rest) offset)
+  | offset == BS.length chunk = nextStrictRecord (FrCodeCursor rest 0)
+  | Just (record, end) <- readStrictRecord chunk offset =
+      Right $ Just (record, FrCodeCursor input end)
+  | otherwise = do
+      -- Reuse the stream parser when any part of the record spans a chunk.
+      (record, remaining) <- readFrCodeRecord (LBSI.Chunk (BSU.unsafeDrop offset chunk) rest)
+      pure $ Just (record, FrCodeCursor remaining 0)
+
+readStrictRecord :: BS.ByteString -> Int -> Maybe (FrCodeRecord, Int)
+readStrictRecord chunk offset = do
+  metadataSize <- BS.elemIndex 0 (BSU.unsafeDrop offset chunk)
+  let deltaOffset = offset + metadataSize + 1
+      remaining = BS.length chunk - deltaOffset
+  (diff, suffixOffset) <- case remaining of
+    0 -> Nothing
+    _
+      | first /= 0x80 -> Just (shortDifferential first, deltaOffset + 1)
+      | remaining >= 3 ->
+          Just (wideDifferential (BSU.unsafeIndex chunk (deltaOffset + 1)) (BSU.unsafeIndex chunk (deltaOffset + 2)), deltaOffset + 3)
+      | otherwise -> Nothing
+      where
+        first = BSU.unsafeIndex chunk deltaOffset
+  let suffix = BSU.unsafeDrop suffixOffset chunk
+  suffixSize <- BS.elemIndex 10 suffix
+  let !record = FrCodeRecord (BSU.unsafeTake metadataSize $ BSU.unsafeDrop offset chunk) diff (BSU.unsafeTake suffixSize suffix)
+  pure (record, suffixOffset + suffixSize + 1)
 
 frCodeEntries :: (MonadFail m) => LBS.ByteString -> m LBS.ByteString
 frCodeEntries = checkFrCode . maybe (Left "invalid header or unsupported version") Right . LBS.stripPrefix frCodeMagic
@@ -412,30 +380,50 @@ foldFrCodeRecords ::
   a ->
   source ->
   m a
-foldFrCodeRecords nextRecord packageRows = nextPackage
+foldFrCodeRecords nextRecord packageRows =
+  foldFrCodeRecordsWith nextRecord beginPath expandPath packageRows emptyPrefix
   where
-    nextPackage acc remaining =
+    beginPath _ path = pure $ PrefixState path 0
+    expandPath previous record = do
+      state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord previous record
+      pure (state, path)
+
+foldFrCodeRecordsWith ::
+  (MonadFail m) =>
+  (source -> Either String (Maybe (FrCodeRecord, source))) ->
+  (state -> BS.ByteString -> m state) ->
+  (state -> FrCodeRecord -> m (state, BS.ByteString)) ->
+  (BS.ByteString -> BS.ByteString -> a -> BS.ByteString -> BS.ByteString -> m a) ->
+  state ->
+  a ->
+  source ->
+  m a
+foldFrCodeRecordsWith nextRecord beginPath expandPath packageRows = nextPackage
+  where
+    nextPackage previous acc remaining =
       checkFrCode (nextRecord remaining) >>= \case
         Nothing -> pure acc
         Just (record@(FrCodeRecord metadata _ _), rest) -> do
-          state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord emptyPrefix record
+          PrefixState path _ <- checkFrCode $ expandFrCodeRecord emptyPrefix record
           package <- case BS.stripPrefix "p" metadata of
             Nothing -> checkFrCode $ Left "expected a package record"
             Just escaped -> checkFrCode $ unescapeFrCode escaped
           storePrefix <- checkFrCode $ unescapeFrCode path
+          state <- beginPath previous path
           nextFile (packageRows package storePrefix) acc state rest
     nextFile row acc previous remaining = do
       (record@(FrCodeRecord metadata _ _), rest) <-
         checkFrCode $ nextRecord remaining >>= maybe (Left "missing package footer") Right
-      state@(PrefixState path _) <- checkFrCode $ expandFrCodeRecord previous record
+      (state, path) <- expandPath previous record
       if BS.null metadata && BS.null path
-        then nextPackage acc rest
+        then nextPackage state acc rest
         else case BS.uncons metadata of
           Just (digit, _) | digit >= 48 && digit <= 57 -> do
             relativePath <- checkFrCode $ unescapeFrCode path
             next <- row acc metadata relativePath
             nextFile row next state rest
           _ -> checkFrCode $ Left "invalid file metadata or missing package footer"
+{-# INLINE foldFrCodeRecordsWith #-}
 
 foldFrCodeBatches :: (IOE :> es) => Int -> (a -> [[FrCodeRecord]] -> Eff es a) -> a -> LBS.ByteString -> Eff es a
 foldFrCodeBatches workers consume initial contents = liftIO (frCodeEntries contents) >>= go initial
@@ -481,22 +469,74 @@ readFrCodeRecord input = do
   pure (record, rest)
 
 expandFrCodeRecord :: PrefixState -> FrCodeRecord -> Either String PrefixState
-expandFrCodeRecord (PrefixState previous previousShared) (FrCodeRecord _ diff suffix)
-  | shared < 0 || shared > BS.length previous || shared > fromIntegral (maxBound @Int16) =
+expandFrCodeRecord (PrefixState previous previousShared) (FrCodeRecord _ diff suffix) = do
+  shared <- checkedSharedPrefix (BS.length previous) (previousShared + diff)
+  pure $ PrefixState (BS.take shared previous <> suffix) shared
+
+checkedSharedPrefix :: Int -> Int -> Either String Int
+checkedSharedPrefix pathLength shared
+  | shared < 0 || shared > pathLength || shared > fromIntegral (maxBound @Int16) =
       Left "shared prefix is out of range"
-  | otherwise = Right $ PrefixState (BS.take shared previous <> suffix) shared
-  where
-    shared = previousShared + diff
+  | otherwise = Right shared
+
+-- The package header stays owned by the parser. Only file paths borrow this
+-- buffer, and the serial search consumes each one before the next write.
+data PathBuffer = PathBuffer
+  { pathStorage :: !(BA.MutableByteArray RealWorld),
+    pathView :: !(ForeignPtr Word8),
+    pathLength :: !Int,
+    pathShared :: !Int
+  }
+
+newPathBuffer :: Int -> IO PathBuffer
+newPathBuffer capacity = do
+  storage <- BA.newPinnedByteArray capacity
+  -- The matcher borrows a view that keeps the pinned array alive.
+  pure $ PathBuffer storage (BA.mutableByteArrayAsForeignPtr storage) 0 0
+
+beginBufferedPath :: PathBuffer -> BS.ByteString -> IO PathBuffer
+beginBufferedPath buffer = writePathSuffix buffer 0
+
+expandBufferedPath :: PathBuffer -> FrCodeRecord -> IO (PathBuffer, BS.ByteString)
+expandBufferedPath buffer (FrCodeRecord _ diff suffix) = do
+  shared <- checkFrCode $ checkedSharedPrefix (pathLength buffer) (pathShared buffer + diff)
+  next <- writePathSuffix buffer shared suffix
+  pure (next, BSI.fromForeignPtr (pathView next) 0 (pathLength next))
+
+writePathSuffix :: PathBuffer -> Int -> BS.ByteString -> IO PathBuffer
+writePathSuffix buffer shared suffix = do
+  let suffixSize = BS.length suffix
+  when (suffixSize > maxBound - shared) $ fail "frcode database: path is too long"
+  let size = shared + suffixSize
+  capacity <- BA.getSizeofMutableByteArray (pathStorage buffer)
+  next <-
+    if size <= capacity
+      then pure buffer
+      else do
+        let grownCapacity = if capacity <= maxBound `quot` 2 then max size (2 * capacity) else size
+        grown <- newPathBuffer grownCapacity
+        when (shared > 0) $
+          BA.copyMutableByteArray (pathStorage grown) 0 (pathStorage buffer) 0 shared
+        pure grown
+  when (suffixSize > 0) $
+    BSU.unsafeUseAsCStringLen suffix $ \(source, _) ->
+      BA.copyPtrToMutableByteArray @IO @Word8 (pathStorage next) shared (castPtr source) suffixSize
+  pure $ next {pathLength = size, pathShared = shared}
 
 decodeDifferential :: LBS.ByteString -> Either String (Int, LBS.ByteString)
 decodeDifferential input = do
   (first, rest) <- nextByte input
   if first /= 0x80
-    then Right (fromIntegral (fromIntegral first :: Int8), rest)
+    then Right (shortDifferential first, rest)
     else do
       (high, lowBytes) <- nextByte rest
       (low, remaining) <- nextByte lowBytes
-      let diff = fromIntegral high * 256 + fromIntegral low :: Int16
-      Right (fromIntegral diff, remaining)
+      Right (wideDifferential high low, remaining)
   where
     nextByte = maybe (Left "missing prefix differential") Right . LBS.uncons
+
+shortDifferential :: Word8 -> Int
+shortDifferential byte = fromIntegral (fromIntegral byte :: Int8)
+
+wideDifferential :: Word8 -> Word8 -> Int
+wideDifferential high low = fromIntegral (fromIntegral high * 256 + fromIntegral low :: Int16)
