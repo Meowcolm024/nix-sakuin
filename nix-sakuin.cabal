@@ -132,3 +132,16 @@ test-suite nix-sakuin-test
     nix-sakuin,
     tasty,
     tasty-hunit,
+
+benchmark rpackages
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test/bench
+  main-is: RPackages.hs
+  ghc-options: -threaded
+  build-depends:
+    criterion,
+    filepath,
+    temporary,
+
+  build-tool-depends: nix-sakuin:nix-sakuin

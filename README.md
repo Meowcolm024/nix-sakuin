@@ -38,6 +38,18 @@ $ nix-sakuin locate --db-format frcode -t x --minimal /bin/ocamlopt
 TSV is the default. The two formats can coexist in the same database directory
 as `database.tsv.zst` and `database.frcode.zst`.
 
+## Benchmark
+
+```sh
+$ nix develop -c cabal bench rpackages
+```
+
+The benchmark compares TSV, FrCode, and upstream `nix-index` on `rPackages.jsonlite`,
+`rPackages.digest`, `rPackages.rlang`, and their dependencies for `x86_64-linux`.
+It times two fresh builds per backend at zstd level 3 with the fetch caches disabled.
+Criterion measures a hit and a miss through the CLI, including a Cabal launcher
+baseline. The results directory contains the indexing timings, logs, and Criterion report.
+
 ## Notes
 
 For indexing:
