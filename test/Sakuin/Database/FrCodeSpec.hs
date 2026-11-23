@@ -112,7 +112,35 @@ tests =
               forM_ ["7 x", "7 r"] $ \metadata ->
                 forM_ ["/bin/Tool", "/bin/Tool-extra", "/xx/bin/Tool", "suffix/bin/Tool", ""] $ \relativePath ->
                   new package storePath metadata relativePath
-                    @?= matchesSearchFields options old package metadata (storePath <> relativePath)
+                    @?= matchesSearchFields options old package metadata (storePath <> relativePath),
+      testCase "matches ASCII literals in place and preserves Unicode folding" $ do
+        let storePath = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-demo"
+            filters = SearchFilter Nothing Nothing [] False False
+            atRoot = filters {filterAtRoot = True}
+            suffix = filters {filterWholeName = True}
+            exact = atRoot {filterWholeName = True}
+            cases =
+              [ ("pandoc", filters, "/panda/PanDOC", True),
+                ("pandoc", filters, "/panda/PanDO", False),
+                ("ana", filters, "/bAnAna", True),
+                ("a-b", filters, "/A_B", False),
+                ("bin/pandoc", atRoot, "/BIN/Pandoc-extra", True),
+                ("bin/pandoc", exact, "/BIN/Pandoc-extra", False),
+                ("bin/pandoc", exact, "/BIN/Pandoc", True),
+                ("pandoc", suffix, "/BIN/Pandoc", True),
+                ("x/pandoc", suffix, "/PanDOC", False),
+                ("", filters, "/x", True),
+                ("", exact, "/x", False),
+                ("a\0b", filters, "/A\0B", True),
+                ("STRASSE", suffix, "/Stra\195\159e", True),
+                ("strasse", exact, "/Stra\195\159e", True),
+                ("K", filters, "/K", True),
+                ("k", filters, "/\226\132\170", True),
+                ("é", filters, "/E", False)
+              ]
+        forM_ cases $ \(pattern, options, relativePath, expected) -> do
+          matcher <- either fail pure $ frCodeMatcher pattern False options
+          matcher "demo.out" storePath "7 x" relativePath @?= expected
     ]
 
 indexed :: Text -> FileNode -> IndexedStorePath

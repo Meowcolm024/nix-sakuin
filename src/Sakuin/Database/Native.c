@@ -230,6 +230,26 @@ static const char *unescape(Buffer *output, Bytes bytes)
     return NULL;
 }
 
+static bool is_ascii(Bytes bytes)
+{
+    while (bytes.size >= sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, bytes.data, sizeof word);
+        if (word & UINT64_C(0x8080808080808080))
+            return false;
+        bytes = drop(bytes, sizeof word);
+    }
+    for (size_t i = 0; i < bytes.size; i++)
+        if (bytes.data[i] >= 128)
+            return false;
+    return true;
+}
+
+static unsigned char ascii_lower(unsigned char byte)
+{
+    return byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte;
+}
+
 static const char *case_fold(Buffer *output, Bytes input, Bytes *result)
 {
     size_t i = 0;
@@ -412,23 +432,44 @@ static const char *prepare_package(Query *query, Bytes metadata)
     return NULL;
 }
 
-static bool contains(Bytes path, Bytes pattern)
+static bool literal_prefix(Bytes path, Bytes pattern, bool ascii)
 {
-    if (pattern.size == 0)
-        return true;
+    if (!ascii)
+        return starts_with(path, pattern);
+    if (pattern.size > path.size)
+        return false;
+    for (size_t i = 0; i < pattern.size; i++)
+        if (ascii_lower(path.data[i]) != pattern.data[i])
+            return false;
+    return true;
+}
+
+static bool contains_from(Bytes path, Bytes pattern, bool ascii, unsigned char first)
+{
     while (path.size >= pattern.size) {
         size_t candidates = path.size - pattern.size + 1;
-        const unsigned char *start = memchr(path.data, pattern.data[0], candidates);
+        const unsigned char *start = memchr(path.data, first, candidates);
         if (!start)
             return false;
-        if (memcmp(start, pattern.data, pattern.size) == 0)
+        path = drop(path, (size_t)(start - path.data));
+        if (literal_prefix(path, pattern, ascii))
             return true;
-        path = drop(path, (size_t)(start - path.data) + 1);
+        path = drop(path, 1);
     }
     return false;
 }
 
-static const char *matches_path(Query *query, Bytes relative, bool *matched)
+static bool contains(Bytes path, Bytes pattern, bool ascii)
+{
+    if (pattern.size == 0)
+        return true;
+    unsigned char first = pattern.data[0];
+    return contains_from(path, pattern, ascii, first) ||
+           (ascii && first >= 'a' && first <= 'z' &&
+            contains_from(path, pattern, true, first - ('a' - 'A')));
+}
+
+static const char *matches_path(Query *query, Bytes relative, bool ascii, bool *matched)
 {
     Bytes path = relative;
     *matched = false;
@@ -459,6 +500,7 @@ static const char *matches_path(Query *query, Bytes relative, bool *matched)
             *matched = path.size == query->pattern.size && starts_with(path, query->pattern);
             return NULL;
         }
+        ascii = !(query->flags & Regex) && is_ascii(path);
     }
 
     if (query->flags & Regex) {
@@ -473,18 +515,20 @@ static const char *matches_path(Query *query, Bytes relative, bool *matched)
         return NULL;
     }
 
-    const char *error = case_fold(&query->folded, path, &path);
-    if (error)
-        return error;
+    if (!ascii) {
+        const char *error = case_fold(&query->folded, path, &path);
+        if (error)
+            return error;
+    }
     Bytes pattern = query->pattern;
     if (query->flags & AtRoot)
-        *matched = starts_with(path, pattern) &&
+        *matched = literal_prefix(path, pattern, ascii) &&
                    (!(query->flags & WholeName) || path.size == pattern.size);
     else if (query->flags & WholeName)
-        *matched =
-            pattern.size <= path.size && starts_with(drop(path, path.size - pattern.size), pattern);
+        *matched = pattern.size <= path.size &&
+                   literal_prefix(drop(path, path.size - pattern.size), pattern, ascii);
     else
-        *matched = contains(path, pattern);
+        *matched = contains(path, pattern, ascii);
     return NULL;
 }
 
@@ -496,7 +540,9 @@ static bool write_bytes(Bytes bytes)
 static const char *search_file(Query *query, Bytes metadata)
 {
     Bytes path = view(&query->path);
-    if (memchr(path.data, 255, path.size)) {
+    /* An ASCII path cannot contain the FrCode escape byte (0xff). */
+    bool ascii = !(query->flags & Regex) && is_ascii(path);
+    if (!ascii && memchr(path.data, 255, path.size)) {
         const char *error = unescape(&query->unescaped, path);
         if (error)
             return error;
@@ -509,7 +555,7 @@ static const char *search_file(Query *query, Bytes metadata)
         return NULL;
 
     bool matched;
-    const char *error = matches_path(query, path, &matched);
+    const char *error = matches_path(query, path, ascii, &matched);
     if (error || !matched)
         return error;
 
