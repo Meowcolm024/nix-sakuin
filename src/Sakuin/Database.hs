@@ -6,7 +6,10 @@ module Sakuin.Database
     runDatabaseWriter,
     readDatabaseEntryCount,
     runDatabaseSearch,
+    runFrCodeNativeSearch,
     runFrCodeParallelSearch,
+    runFrCodeParallelRipgrepSearch,
+    runFrCodeRipgrepSearch,
     runTsvDatabase,
     runTsvSearch,
     withTsvDatabase,
@@ -18,7 +21,8 @@ import Effectful
 import Effectful.Concurrent (Concurrent)
 import Effectful.Error.Static (Error)
 import Sakuin.Database.Common (DatabaseWriter, readDatabaseEntryCount, runDatabaseWriter)
-import Sakuin.Database.FrCode (runFrCodeParallelSearch, runFrCodeSearch, withFrCodeDatabase)
+import Sakuin.Database.FrCode (runFrCodeParallelRipgrepSearch, runFrCodeParallelSearch, runFrCodeRipgrepSearch, runFrCodeSearch, withFrCodeDatabase)
+import Sakuin.Database.Native (runFrCodeNativeSearch)
 import Sakuin.Database.TSV (readTsvEntryCount, runTsvDatabase, runTsvSearch, withTsvDatabase)
 import Sakuin.Search (SearchError)
 import Sakuin.Types (Search)

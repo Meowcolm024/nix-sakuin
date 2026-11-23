@@ -37,12 +37,22 @@ $ nix-sakuin index --db-format tsv
 $ nix-sakuin locate --db-format tsv -t x --minimal /bin/ocamlopt
 ```
 
-Use `--parallel` on a FrCode query to decode and match chunks across GHC capabilities.
-The same database supports both query modes, and results stay in database order.
+Use `--parallel` on a FrCode query to decode and match chunks across GHC
+capabilities while preserving database order.
 
 ```sh
 $ nix-sakuin locate --parallel -t x --minimal /bin/ocamlopt
 ```
+
+Use `--ripgrep` to benchmark streaming decoded FrCode rows through `rg`.
+It prefilters on ASCII literals when available and applies the FrCode matcher
+to the candidate rows. Combine `--parallel --ripgrep` to decode chunks across
+GHC capabilities and send them to `rg` as they finish. Rows from different
+chunks may appear out of database order.
+
+Use `--cheat` to try the experimental C backend with an existing FrCode
+database. It runs on one thread and uses the platform's POSIX extended regular
+expression engine for `--regex`.
 
 ## Benchmark
 
@@ -53,9 +63,9 @@ $ nix develop -c cabal bench rpackages
 The benchmark compares TSV, FrCode, and upstream `nix-index` on `rPackages.jsonlite`,
 `rPackages.digest`, `rPackages.rlang`, and their dependencies for `x86_64-linux`.
 It times two fresh builds per backend at zstd level 3 with the fetch caches disabled.
-Criterion measures a hit and a miss through the CLI, with serial and parallel
-FrCode querying the same index and a separate Cabal launcher baseline. The
-results directory contains the indexing timings, logs, and Criterion report.
+Criterion measures a hit and a miss through the CLI. All FrCode query modes
+share an index. The results directory contains the indexing timings, logs, and
+Criterion report.
 
 ## Notes
 

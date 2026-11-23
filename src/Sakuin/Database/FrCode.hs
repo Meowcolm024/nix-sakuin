@@ -4,6 +4,8 @@ module Sakuin.Database.FrCode
   ( withFrCodeDatabase,
     runFrCodeSearch,
     runFrCodeParallelSearch,
+    runFrCodeParallelRipgrepSearch,
+    runFrCodeRipgrepSearch,
     frCodeMatcher,
     foldFrCodeRows,
     searchFrCodeChunks,
@@ -11,28 +13,32 @@ module Sakuin.Database.FrCode
 where
 
 import Control.Concurrent (getNumCapabilities)
-import Control.Monad (foldM, void)
+import Control.Concurrent.Chan (newChan, readChan, writeChan)
+import Control.Exception qualified as E
+import Control.Monad (foldM, replicateM_, void)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (Builder, byteString, int16BE, toLazyByteString, word8)
 import Data.ByteString.Builder.Extra (safeStrategy, toLazyByteStringWith)
+import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Int (Int16, Int8)
 import Data.Map qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8, decodeUtf8')
 import Effectful
 import Effectful.Concurrent (Concurrent, runConcurrent)
-import Effectful.Concurrent.Async (mapConcurrently)
+import Effectful.Concurrent.Async (concurrently_, mapConcurrently, mapConcurrently_)
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static
 import Effectful.Exception
-import Sakuin.Database.Common (DatabaseWriter, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesFileTypeFilter, matchesPackageFilter, matchesSearchFields, withDatabaseWriter)
+import Sakuin.Database.Common (DatabaseWriter, checkRgExitCode, decompressDatabase, foldIndexedFiles, indexedPathFields, matchesFileTypeFilter, matchesPackageFilter, matchesSearchFields, rgBaseArguments, withDatabaseWriter)
 import Sakuin.Search
 import Sakuin.Types
-import System.IO (Handle)
-import System.Process.Typed (checkExitCode, getStdout, withProcessWait)
+import System.IO (BufferMode (BlockBuffering), Handle, hClose, hIsEOF, hSetBuffering)
+import System.Process.Typed (checkExitCode, createPipe, getStdin, getStdout, proc, setStdin, setStdout, withProcessWait)
 
 withFrCodeDatabase ::
   forall es a. (Concurrent :> es, IOE :> es) => Int -> Handle -> (DatabaseWriter -> Eff es a) -> Eff es a
@@ -40,18 +46,28 @@ withFrCodeDatabase = withDatabaseWriter frCodeMagic encodeFrCodeStorePath
 
 runFrCodeSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeSearch = runFrCodeSearchWith searchFrCodeRows
+runFrCodeSearch = runFrCodeSearchWith $ \_ _ -> searchFrCodeRows
 
 runFrCodeParallelSearch ::
   forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
-runFrCodeParallelSearch = runFrCodeSearchWith $ \isMinimal matchesPath output contents -> do
+runFrCodeParallelSearch = runFrCodeSearchWith $ \_ _ isMinimal matchesPath output contents -> do
   workers <- getNumCapabilities
   searchFrCodeChunksWith workers isMinimal matchesPath output contents
+
+runFrCodeRipgrepSearch ::
+  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
+runFrCodeRipgrepSearch = runFrCodeSearchWith (searchFrCodeWithRg Nothing)
+
+runFrCodeParallelRipgrepSearch ::
+  forall es a. (IOE :> es, Error SearchError :> es) => FilePath -> Bool -> Eff (Search : es) a -> Eff es a
+runFrCodeParallelRipgrepSearch = runFrCodeSearchWith $ \pattern isRegex isMinimal matchesPath output contents -> do
+  workers <- getNumCapabilities
+  searchFrCodeWithRg (Just workers) pattern isRegex isMinimal matchesPath output contents
 
 runFrCodeSearchWith ::
   forall es a.
   (IOE :> es, Error SearchError :> es) =>
-  (Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
+  (Text -> Bool -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()) ->
   FilePath ->
   Bool ->
   Eff (Search : es) a ->
@@ -62,7 +78,7 @@ runFrCodeSearchWith search databasePath isMinimal = interpret $ \_ -> \case
     result <- tryJust synchronous $ withProcessWait (decompressDatabase databasePath) $ \process -> do
       liftIO $ do
         contents <- LBS.hGetContents (getStdout process)
-        search isMinimal matchesPath BS.putStr contents
+        search pattern isRegex isMinimal matchesPath BS.putStr contents
       checkExitCode process
     either (throwError . SearchProcessError . T.pack . displayException) pure result
   where
@@ -111,30 +127,109 @@ searchFrCodeRows isMinimal matchesPath output = void . foldFrCodePackages printP
               writeMatch isMinimal output seen (formatMatch isMinimal package metadata storePrefix relativePath)
           | otherwise = pure seen
 
+searchFrCodeWithRg :: Maybe Int -> Text -> Bool -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
+searchFrCodeWithRg workers pattern isRegex isMinimal matchesPath output contents =
+  withProcessWait config $ \process -> do
+    runEff . runConcurrent $
+      concurrently_ (feed (getStdin process)) (liftIO $ drain (getStdout process) Set.empty)
+    checkRgExitCode process
+  where
+    config = setStdin createPipe . setStdout createPipe $ proc "rg" (rgFrCodeArguments pattern isRegex)
+
+    -- Escape the two framing bytes so tabs and newlines in a path survive
+    -- the round trip through ripgrep.
+    feed input = do
+      liftIO $ hSetBuffering input (BlockBuffering Nothing)
+      case workers of
+        Nothing -> liftIO $ foldFrCodePackages (feedPackage input) () contents
+        Just count -> foldFrCodeBatches count (feedBatch input) () contents
+      liftIO $ hClose input
+
+    feedPackage input package storePrefix =
+      let header = rgRowHeader package storePrefix
+       in \() metadata relativePath ->
+            BS.hPut input $ BS.concat (rgRowFields header metadata relativePath)
+
+    feedBatch input () chunks = do
+      completed <- liftIO newChan
+      let publish chunk = encodeChunk chunk >>= writeChan completed
+      -- Workers publish complete chunks. Only this consumer writes to rg,
+      -- so completion order cannot interleave the bytes of two chunks.
+      concurrently_
+        (mapConcurrently_ (liftIO . publish) chunks)
+        (liftIO $ replicateM_ (length chunks) (readChan completed >>= LBS.hPut input))
+
+    encodeChunk records = do
+      rows <- foldFrCodeRecords nextChunkRecord collectPackage [] (reverse records)
+      let encoded = toLazyByteString (mconcat $ reverse rows)
+      -- Force encoding in the worker, before the single consumer writes it.
+      _ <- E.evaluate (LBS.length encoded)
+      pure encoded
+
+    collectPackage package storePrefix =
+      let header = rgRowHeader package storePrefix
+       in \rows metadata relativePath ->
+            pure (foldMap byteString (rgRowFields header metadata relativePath) : rows)
+
+    rgRowHeader package storePrefix = BS.concat [escapeFrCode package, "\0", escapeFrCode storePrefix, "\0"]
+    rgRowFields header metadata relativePath = [header, metadata, "\0", escapeFrCode relativePath, "\n"]
+
+    drain input seen = do
+      atEnd <- hIsEOF input
+      if atEnd
+        then pure ()
+        else do
+          line <- BS8.hGetLine input
+          seen' <- case BS.split 0 line of
+            [packageBytes, storeBytes, metadata, pathBytes] -> do
+              package <- checkFrCode $ unescapeFrCode packageBytes
+              if isMinimal && Set.member package seen
+                then pure seen
+                else do
+                  storePrefix <- checkFrCode $ unescapeFrCode storeBytes
+                  relativePath <- checkFrCode $ unescapeFrCode pathBytes
+                  if matchesPath package storePrefix metadata relativePath
+                    then writeMatch isMinimal output seen (formatMatch isMinimal package metadata storePrefix relativePath)
+                    else pure seen
+            _ -> fail "invalid FrCode row from rg"
+          drain input seen'
+
+rgFrCodeArguments :: Text -> Bool -> [String]
+rgFrCodeArguments pattern isRegex =
+  ["--no-config"] <> rgBaseArguments <> prefilter <> ["--", "-"]
+  where
+    -- A plain regex (possibly anchored) has a required literal. Other regexes
+    -- go through unchanged to the exact matcher after ripgrep passes the rows.
+    unanchored = fromMaybe pattern (T.stripPrefix "^" pattern)
+    literal = fromMaybe unanchored (T.stripSuffix "$" unanchored)
+    printableAscii = T.all (\c -> c >= ' ' && c <= '~')
+    regexMeta c = c `elem` ("\\.^$|?*+()[]{}" :: String)
+    quote c = if regexMeta c then T.pack ['\\', c] else T.singleton c
+    prefilter
+      | isRegex && printableAscii literal && not (T.any regexMeta literal) =
+          ["--fixed-strings", "-e", T.unpack literal]
+      | not isRegex && printableAscii pattern =
+          -- Unicode full case folding can expand a character (e.g. ß to ss).
+          -- Send non-ASCII rows to the Haskell matcher to preserve those hits.
+          ["--ignore-case", "-e", T.unpack (T.concatMap quote pattern), "-e", "(?-u:[\\x80-\\xff])"]
+      | otherwise = ["-e", ""]
+
 searchFrCodeChunks :: Int -> Bool -> SearchFilter -> PathMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
 searchFrCodeChunks workers isMinimal filters matchesPath =
   searchFrCodeChunksWith workers isMinimal $ \package storePrefix metadata relativePath ->
     matchesSearchFields filters matchesPath package metadata (storePrefix <> relativePath)
 
 searchFrCodeChunksWith :: Int -> Bool -> FrCodeMatcher -> (BS.ByteString -> IO ()) -> LBS.ByteString -> IO ()
-searchFrCodeChunksWith workers isMinimal matchesPath output contents = do
-  entries <- frCodeEntries contents
-  runEff . runConcurrent $ searchBatches Set.empty entries
+searchFrCodeChunksWith workers isMinimal matchesPath output contents =
+  runEff . runConcurrent $ void $ foldFrCodeBatches workers searchBatch Set.empty contents
   where
-    searchBatches seen remaining = do
-      (chunks, rest) <- liftIO $ readChunks (max 1 workers) remaining
-      case chunks of
-        [] -> pure ()
-        _ -> do
-          matches <- mapConcurrently (liftIO . searchChunk seen) chunks
-          seen' <- liftIO $ foldM (foldM $ writeMatch isMinimal output) seen matches
-          searchBatches seen' rest
+    searchBatch seen chunks = do
+      matches <- mapConcurrently (liftIO . searchChunk seen) chunks
+      liftIO $ foldM (foldM $ writeMatch isMinimal output) seen matches
 
     searchChunk seen reversedRecords = do
-      (_, matches) <- foldFrCodeRecords nextRecord collectMatch (seen, []) (reverse reversedRecords)
+      (_, matches) <- foldFrCodeRecords nextChunkRecord collectMatch (seen, []) (reverse reversedRecords)
       pure $! reverse matches
-    nextRecord [] = Right Nothing
-    nextRecord (record : rest) = Right $ Just (record, rest)
 
     collectMatch package storePrefix = collect
       where
@@ -300,6 +395,21 @@ foldFrCodeRecords nextRecord packageRows = nextPackage
             next <- row acc metadata relativePath
             nextFile row next state rest
           _ -> checkFrCode $ Left "invalid file metadata or missing package footer"
+
+foldFrCodeBatches :: (IOE :> es) => Int -> (a -> [[FrCodeRecord]] -> Eff es a) -> a -> LBS.ByteString -> Eff es a
+foldFrCodeBatches workers consume initial contents = liftIO (frCodeEntries contents) >>= go initial
+  where
+    go acc remaining = do
+      (chunks, rest) <- liftIO $ readChunks (max 1 workers) remaining
+      case chunks of
+        [] -> pure acc
+        _ -> do
+          next <- consume acc chunks
+          go next rest
+
+nextChunkRecord :: [FrCodeRecord] -> Either String (Maybe (FrCodeRecord, [FrCodeRecord]))
+nextChunkRecord [] = Right Nothing
+nextChunkRecord (record : rest) = Right $ Just (record, rest)
 
 -- Frame the stream once on the reader. Only a package footer resets the
 -- prefix state, so a package larger than the chunk target stays together.

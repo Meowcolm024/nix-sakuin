@@ -9,6 +9,8 @@ module Sakuin.Database.Common
     indexedPathFields,
     foldIndexedFiles,
     decompressDatabase,
+    rgBaseArguments,
+    checkRgExitCode,
     matchesSearchFields,
     matchesPackageFilter,
     matchesFileTypeFilter,
@@ -31,7 +33,7 @@ import Effectful.Exception
 import Sakuin.Search (hasStoreHash)
 import Sakuin.Types
 import System.IO (Handle)
-import System.Process.Typed (ProcessConfig, createPipe, proc, setStdout)
+import System.Process.Typed (ExitCode (..), Process, ProcessConfig, createPipe, proc, setStdout, waitExitCode)
 
 -- Keep the original TSV writer type available to existing callers.
 data TsvDatabase = TsvDatabase
@@ -134,6 +136,16 @@ foldIndexedFiles line = go True mempty
 
 decompressDatabase :: FilePath -> ProcessConfig () Handle ()
 decompressDatabase databasePath = setStdout createPipe $ proc "zstd" ["--decompress", "--stdout", databasePath]
+
+rgBaseArguments :: [String]
+rgBaseArguments = ["--text", "--no-line-number", "--no-heading", "--color", "never"]
+
+checkRgExitCode :: Process stdin stdout stderr -> IO ()
+checkRgExitCode process =
+  waitExitCode process >>= \case
+    ExitSuccess -> pure ()
+    ExitFailure 1 -> pure ()
+    ExitFailure code -> ioError . userError $ "rg failed with exit code " <> show code
 
 matchesSearchFields :: SearchFilter -> PathMatcher -> BS.ByteString -> BS.ByteString -> BS.ByteString -> Bool
 matchesSearchFields filters matchesPath package metadata fullPath =

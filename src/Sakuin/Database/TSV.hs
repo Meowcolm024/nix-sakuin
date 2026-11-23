@@ -87,11 +87,7 @@ searchTsvDatabase databasePath pattern isRegex filters isMinimal =
                       | otherwise -> pure seen
               else void $ drainSearchResults (getStdout rgProcess) () $ \line () ->
                 when (matchesTsvSearchFilter filters matchesPath line) $ liftIO (LBS8.putStrLn line)
-            rgExit <- waitExitCode rgProcess
-            case rgExit of
-              ExitSuccess -> pure ()
-              ExitFailure 1 -> pure ()
-              ExitFailure code -> throwIO . userError $ "rg failed with exit code " <> show code
+            liftIO $ checkRgExitCode rgProcess
             checkExitCode zstdProcess
       either (throwError . SearchProcessError . T.pack . displayException) pure result
     rgConfig input = setStdin (useHandleOpen input) $ proc "rg" (rgArguments pattern isRegex)
@@ -109,7 +105,7 @@ drainSearchResults input acc sink = do
 
 rgArguments :: Text -> Bool -> [String]
 rgArguments pattern isRegex =
-  ["--text", "--no-line-number", "--no-heading", "--color", "never"]
+  rgBaseArguments
     <> (if isRegex then [] else ["--fixed-strings", "--ignore-case"])
     <> ["--", T.unpack pattern]
 

@@ -13,6 +13,11 @@
     }:
     {
       haskellProjects.default = {
+        basePackages = pkgs.haskellPackages.extend (_: _: {
+          libutf8proc = pkgs.utf8proc;
+          libzstd = pkgs.zstd;
+        });
+
         projectRoot = builtins.toString (
           lib.fileset.toSource {
             inherit root;

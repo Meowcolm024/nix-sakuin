@@ -85,6 +85,17 @@ library
 
   other-modules:
     Sakuin.Database.Common
+    Sakuin.Database.Native
+
+  c-sources: src/Sakuin/Database/Native.c
+  cc-options:
+    -O3
+    -Wall
+    -Wextra
+
+  pkgconfig-depends:
+    libutf8proc,
+    libzstd,
 
 executable nix-sakuin
   import: shared
